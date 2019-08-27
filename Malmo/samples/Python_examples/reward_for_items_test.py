@@ -1,3 +1,4 @@
+from __future__ import print_function
 # ------------------------------------------------------------------------------------------------
 # Copyright (c) 2016 Microsoft Corporation
 # 
@@ -21,6 +22,7 @@
 # gives the agent a certain reward. Agent runs around collecting items, and turns left or right depending on the detected reward.
 # Also demonstrates use of ObservationFromNearbyEntities
 
+from builtins import range
 import MalmoPython
 import os
 import random
@@ -30,8 +32,14 @@ import json
 import random
 import errno
 from collections import namedtuple
+import malmoutils
+
+malmoutils.fix_print()
+
+agent_host = MalmoPython.AgentHost()
+malmoutils.parse_command_line(agent_host)
+
 EntityInfo = namedtuple('EntityInfo', 'x, y, z, name, quantity')
-EntityInfo.__new__.__defaults__ = (0, 0, 0, "", 1)
 
 def GetMissionXML(summary, itemDrawingXML):
     ''' Build an XML mission string that uses the RewardForCollectingItem mission handler.'''
@@ -99,15 +107,6 @@ def SetVelocity(vel):
 def SetTurn(turn):
     agent_host.sendCommand( "turn " + str(turn) )
 
-recordingsDirectory="EatingRecordings"
-try:
-    os.makedirs(recordingsDirectory)
-except OSError as exception:
-    if exception.errno != errno.EEXIST: # ignore error if already existed
-        raise
-
-sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', 0)  # flush print output immediately
-
 validate = True
 # Create a pool of Minecraft Mod clients.
 # By default, mods will choose consecutive mission control ports, starting at 10000,
@@ -119,17 +118,6 @@ my_client_pool.add(MalmoPython.ClientInfo("127.0.0.1", 10001))
 my_client_pool.add(MalmoPython.ClientInfo("127.0.0.1", 10002))
 my_client_pool.add(MalmoPython.ClientInfo("127.0.0.1", 10003))
 
-agent_host = MalmoPython.AgentHost()
-try:
-    agent_host.parse( sys.argv )
-except RuntimeError as e:
-    print 'ERROR:',e
-    print agent_host.getUsage()
-    exit(1)
-if agent_host.receivedArgument("help"):
-    print agent_host.getUsage()
-    exit(0)
-
 itemdrawingxml = GetItemDrawingXML()
 
 if agent_host.receivedArgument("test"):
@@ -140,9 +128,7 @@ else:
 for iRepeat in range(num_reps):
     my_mission = MalmoPython.MissionSpec(GetMissionXML("Nom nom nom run #" + str(iRepeat), itemdrawingxml),validate)
     # Set up a recording
-    my_mission_record = MalmoPython.MissionRecordSpec(recordingsDirectory + "//" + "Mission_" + str(iRepeat) + ".tgz")
-    my_mission_record.recordRewards()
-    my_mission_record.recordMP4(24,400000)
+    my_mission_record = malmoutils.get_default_recording_object(agent_host, "Mission_" + str(iRepeat + 1))
     max_retries = 3
     for retry in range(max_retries):
         try:
@@ -151,8 +137,8 @@ for iRepeat in range(num_reps):
             break
         except RuntimeError as e:
             if retry == max_retries - 1:
-                print "Error starting mission",e
-                print "Is the game running?"
+                print("Error starting mission",e)
+                print("Is the game running?")
                 exit(1)
             else:
                 time.sleep(2)
@@ -174,14 +160,14 @@ for iRepeat in range(num_reps):
             msg = world_state.observations[-1].text
             ob = json.loads(msg)
             if "close_entities" in ob:
-                entities = [EntityInfo(**k) for k in ob["close_entities"]]
+                entities = [EntityInfo(k["x"], k["y"], k["z"], k["name"], k.get("quantity")) for k in ob["close_entities"]]
                 for ent in entities:
-                    print ent.name, ent.x, ent.z, ent.quantity
+                    print(ent.name, ent.x, ent.z, ent.quantity)
             
             if "far_entities" in ob:
-                far_entities = [EntityInfo(**k) for k in ob["far_entities"]]
+                far_entities = [EntityInfo(k["x"], k["y"], k["z"], k["name"], k.get("quantity")) for k in ob["far_entities"]]
                 for ent in far_entities:
-                    print ent.name, ent.quantity
+                    print(ent.name, ent.quantity)
                 
         if world_state.number_of_rewards_since_last_state > 0:
             # A reward signal has come in - see what it is:
@@ -203,7 +189,7 @@ for iRepeat in range(num_reps):
         time.sleep(0.1)
         
     # mission has ended.
-    print "Mission " + str(iRepeat+1) + ": Reward = " + str(reward)
+    print("Mission " + str(iRepeat+1) + ": Reward = " + str(reward))
     for error in world_state.errors:
-        print "Error:",error.text
+        print("Error:",error.text)
     time.sleep(0.5) # Give the mod a little time to prepare for the next mission.

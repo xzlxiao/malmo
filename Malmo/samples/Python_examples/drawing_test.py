@@ -1,3 +1,5 @@
+from __future__ import print_function
+from __future__ import division
 # ------------------------------------------------------------------------------------------------
 # Copyright (c) 2016 Microsoft Corporation
 # 
@@ -17,6 +19,8 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 # ------------------------------------------------------------------------------------------------
 
+from builtins import range
+from past.utils import old_div
 import MalmoPython
 import json
 import math
@@ -24,6 +28,14 @@ import os
 import random
 import sys
 import time
+import malmoutils
+
+malmoutils.fix_print()
+
+agent_host = MalmoPython.AgentHost()
+malmoutils.parse_command_line(agent_host)
+recordingsDirectory = malmoutils.get_recordings_directory(agent_host)
+video_requirements = '<VideoProducer><Width>860</Width><Height>480</Height></VideoProducer>' if agent_host.receivedArgument("record_video") else ''
 
 #-------------------------------------------------------------------------------------------------------------------------------------
 #Very simple script to test drawing code - starts a mission in order to draw, but quits after a second.
@@ -35,9 +47,9 @@ def Menger(xorg, yorg, zorg, size, blocktype, holetype):
     #now remove holes
     unit = size
     while (unit >= 3):
-        w=unit/3
-        for i in xrange(0, size, unit):
-            for j in xrange(0, size, unit):
+        w=old_div(unit,3)
+        for i in range(0, size, unit):
+            for j in range(0, size, unit):
                 x=xorg+i
                 y=yorg+j
                 genstring += GenCuboid(x+w,y+w,zorg,(x+2*w)-1,(y+2*w)-1,zorg+size-1,holetype) + "\n"
@@ -47,7 +59,7 @@ def Menger(xorg, yorg, zorg, size, blocktype, holetype):
                 genstring += GenCuboid(x+w,yorg,z+w,(x+2*w)-1,yorg+size-1,(z+2*w)-1,holetype) + "\n"
                 if (w == 1):
                     genstring += GenItem(x+w, yorg+size+100, z+w, "diamond") + "\n"
-        unit/=3
+        unit = w
     return genstring
 
 def GenCuboid(x1, y1, z1, x2, y2, z2, blocktype):
@@ -118,26 +130,22 @@ missionXML = '''<?xml version="1.0" encoding="UTF-8" ?>
                         <min x="-10711" y="55" z="347"/>
                         <max x="-10709" y="55" z="349"/>
                     </Grid>
-                </ObservationFromGrid>
+                </ObservationFromGrid>''' + video_requirements + '''
             </AgentHandlers>
         </AgentSection>
 
     </Mission>'''
 
-sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', 0)  # flush print output immediately
 my_mission = MalmoPython.MissionSpec(missionXML,True)
-agent_host = MalmoPython.AgentHost()
-try:
-    agent_host.parse( sys.argv )
-except RuntimeError as e:
-    print 'ERROR:',e
-    print agent_host.getUsage()
-    exit(1)
-if agent_host.receivedArgument("help"):
-    print agent_host.getUsage()
-    exit(0)
-
 my_mission_record = MalmoPython.MissionRecordSpec()
+if recordingsDirectory:
+    my_mission_record.recordRewards()
+    my_mission_record.recordObservations()
+    my_mission_record.recordCommands()
+    my_mission_record.setDestination(recordingsDirectory + "//" + "Mission_1.tgz")
+    if agent_host.receivedArgument("record_video"):
+        my_mission_record.recordMP4(24,2000000)
+
 max_retries = 3
 for retry in range(max_retries):
     try:
@@ -145,8 +153,8 @@ for retry in range(max_retries):
         break
     except RuntimeError as e:
         if retry == max_retries - 1:
-            print "Error starting mission",e
-            print "Is the game running?"
+            print("Error starting mission",e)
+            print("Is the game running?")
             exit(1)
         else:
             time.sleep(2)
@@ -166,7 +174,7 @@ if agent_host.receivedArgument("test"):
     assert len(world_state.observations) > 0, 'No observations received'
     obs = json.loads( world_state.observations[-1].text )
     player_y = obs[u'YPos']
-    print 'Player at y =',player_y
+    print('Player at y =',player_y)
     assert math.fabs( player_y - 83.0 ) < 0.01, 'Player not at expected height'
     
     # check the grid observations
@@ -176,4 +184,4 @@ if agent_host.receivedArgument("test"):
         assert '"very_far":["stained_glass","stained_glass","stained_glass","stained_glass","stained_glass","stained_glass","stained_glass","stained_glass","stained_glass"]' in obs.text, 'Vey far observation incorrect:'+obs.text
 
 # mission has ended.
-print "Mission over - feel free to explore the world."
+print("Mission over - feel free to explore the world.")

@@ -27,20 +27,22 @@
 // Boost:
 #include <boost/function.hpp>
 #include <boost/thread.hpp>
+#include <boost/shared_ptr.hpp>
 
 // STL:
 #include <fstream>
 #include <memory>
+#include <string>
 
 namespace malmo
 {
     //! A TCP server that receives strings and can optionally persist to file.
-    class StringServer
+    class StringServer : ServerScope
     {
         public:
 
             //! Constructs a string server on a specified port.
-            StringServer(boost::asio::io_service& io_service, int port, const boost::function<void(const TimestampedString string_message)> handle_string);
+            StringServer(boost::asio::io_service& io_service, int port, const boost::function<void(const TimestampedString string_message)> handle_string, const std::string& log_name);
             
             StringServer& record(std::string path);
             
@@ -56,16 +58,26 @@ namespace malmo
             void recordMessage(const TimestampedString message);
 
             //! Starts the string server.
-            void start();
+
+            void start(boost::shared_ptr<StringServer>& scope);
+
+            virtual void release();
+
+            void close();
 
         private:
 
             void handleMessage(const TimestampedUnsignedCharVector message);
 
             boost::function<void(const TimestampedString string_message)> handle_string;
-            TCPServer server;
+            boost::asio::io_service& io_service;
+            int port;
+            const std::string log_name;
+            boost::shared_ptr<TCPServer> server;
             std::ofstream writer;
             boost::mutex write_mutex;
+
+            boost::shared_ptr<StringServer> scope = nullptr;
     };
 }
 

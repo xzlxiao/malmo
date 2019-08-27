@@ -1,3 +1,4 @@
+from __future__ import print_function
 # ------------------------------------------------------------------------------------------------
 # Copyright (c) 2016 Microsoft Corporation
 # 
@@ -22,6 +23,7 @@
 # to calculate speed of movement, and chooses tiny "programmes" to execute if the speed drops to below a certain threshold.
 # Mission continues until the agent dies.
 
+from builtins import range
 import MalmoPython
 import os
 import random
@@ -30,6 +32,14 @@ import time
 import datetime
 import json
 import random
+import malmoutils
+
+malmoutils.fix_print()
+
+agent_host = MalmoPython.AgentHost()
+malmoutils.parse_command_line(agent_host)
+recordingsDirectory = malmoutils.get_recordings_directory(agent_host)
+video_requirements = '<VideoProducer><Width>860</Width><Height>480</Height></VideoProducer>' if agent_host.receivedArgument("record_video") else ''
 
 def GetMissionXML():
     ''' Build an XML mission string that uses the DefaultWorldGenerator.'''
@@ -55,7 +65,7 @@ def GetMissionXML():
             </AgentStart>
             <AgentHandlers>
                 <ContinuousMovementCommands/>
-                <ObservationFromFullStats/>
+                <ObservationFromFullStats/>''' + video_requirements + '''
             </AgentHandlers>
         </AgentSection>
 
@@ -70,20 +80,15 @@ commandSequences=[
     "move 0; pitch 1; wait 2; pitch 0; use 1; jump 1; wait 6; use 0; jump 0; pitch -1; wait 1; pitch 0; wait 2; move 1; wait 2" # attempt to build tower under our feet
 ]
 
-sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', 0)  # flush print output immediately
-
 my_mission = MalmoPython.MissionSpec(GetMissionXML(), True)
-
-agent_host = MalmoPython.AgentHost()
-try:
-    agent_host.parse( sys.argv )
-except RuntimeError as e:
-    print 'ERROR:',e
-    print agent_host.getUsage()
-    exit(1)
-if agent_host.receivedArgument("help"):
-    print agent_host.getUsage()
-    exit(0)
+my_mission_record = MalmoPython.MissionRecordSpec()
+if recordingsDirectory:
+    my_mission_record.setDestination(recordingsDirectory + "//" + "Mission_1.tgz")
+    my_mission_record.recordRewards()
+    my_mission_record.recordObservations()
+    my_mission_record.recordCommands()
+    if agent_host.receivedArgument("record_video"):
+        my_mission_record.recordMP4(24,2000000)
 
 if agent_host.receivedArgument("test"):
     my_mission.timeLimitInSeconds(20) # else mission runs forever
@@ -92,12 +97,12 @@ if agent_host.receivedArgument("test"):
 max_retries = 3
 for retry in range(max_retries):
     try:
-        agent_host.startMission( my_mission, MalmoPython.MissionRecordSpec() )
+        agent_host.startMission( my_mission, my_mission_record )
         break
     except RuntimeError as e:
         if retry == max_retries - 1:
-            print "Error starting mission",e
-            print "Is the game running?"
+            print("Error starting mission",e)
+            print("Is the game running?")
             exit(1)
         else:
             time.sleep(2)
@@ -147,7 +152,7 @@ while world_state.is_mission_running:
                 currentSequence = commands[1]
             else:
                 currentSequence = ""
-            print command
+            print(command)
             verb,sep,param = command.partition(" ")
             if verb == "wait":  # "wait" isn't a Malmo command - it's just used here to pause execution of our "programme".
                 waitCycles = int(param.strip())
@@ -156,6 +161,6 @@ while world_state.is_mission_running:
                 
     if currentSequence == "" and currentSpeed < 50 and waitCycles == 0: # Are we stuck?
         currentSequence = random.choice(commandSequences)   # Choose a random action (or insert your own logic here for choosing more sensibly...)
-        print "Stuck! Chosen programme: " + currentSequence
+        print("Stuck! Chosen programme: " + currentSequence)
 
 # Mission has ended.

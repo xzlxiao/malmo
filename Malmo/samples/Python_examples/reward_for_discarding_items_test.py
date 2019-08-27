@@ -1,3 +1,4 @@
+from __future__ import print_function
 # ------------------------------------------------------------------------------------------------
 # Copyright (c) 2016 Microsoft Corporation
 # 
@@ -20,14 +21,21 @@
 # Sample to demonstrate use of the RewardForDiscardingItem mission handler, and the DiscardCurrentItem command.
 # Leaves a trail of bread-crumbs.
 
+from builtins import range
 import MalmoPython
 import os
 import random
 import sys
 import time
 import json
+import malmoutils
 
-def GetMissionXML(summary):
+malmoutils.fix_print()
+
+agent_host = MalmoPython.AgentHost()
+malmoutils.parse_command_line(agent_host)
+
+def GetMissionXML(summary, video_xml):
     ''' Build an XML mission string that uses the RewardForCollectingItem mission handler.'''
     
     return '''<?xml version="1.0" encoding="UTF-8" ?>
@@ -63,7 +71,7 @@ def GetMissionXML(summary):
                 </RewardForDiscardingItem>
                 <InventoryCommands/>
                 <ChatCommands/>
-                <ContinuousMovementCommands turnSpeedDegs="240"/>
+                <ContinuousMovementCommands turnSpeedDegs="240"/>''' + video_xml + '''
             </AgentHandlers>
         </AgentSection>
 
@@ -76,8 +84,6 @@ def SetVelocity(vel):
 def SetTurn(turn):
     agent_host.sendCommand( "turn " + str(turn) )
 
-sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', 0)  # flush print output immediately
-
 validate = True
 # Create a pool of Minecraft Mod clients.
 # By default, mods will choose consecutive mission control ports, starting at 10000,
@@ -89,26 +95,15 @@ my_client_pool.add(MalmoPython.ClientInfo("127.0.0.1", 10001))
 my_client_pool.add(MalmoPython.ClientInfo("127.0.0.1", 10002))
 my_client_pool.add(MalmoPython.ClientInfo("127.0.0.1", 10003))
 
-agent_host = MalmoPython.AgentHost()
-try:
-    agent_host.parse( sys.argv )
-except RuntimeError as e:
-    print 'ERROR:',e
-    print agent_host.getUsage()
-    exit(1)
-if agent_host.receivedArgument("help"):
-    print agent_host.getUsage()
-    exit(0)
-
 if agent_host.receivedArgument("test"):
     num_reps = 1
 else:
     num_reps = 30000
 
 for iRepeat in range(num_reps):
-    my_mission = MalmoPython.MissionSpec(GetMissionXML("Let them eat fish/cookies #" + str(iRepeat)),validate)
+    my_mission = MalmoPython.MissionSpec(GetMissionXML("Let them eat fish/cookies #" + str(iRepeat + 1), malmoutils.get_video_xml(agent_host)),validate)
     # Set up a recording
-    my_mission_record = MalmoPython.MissionRecordSpec()
+    my_mission_record = malmoutils.get_default_recording_object(agent_host, "Mission_{}".format(iRepeat + 1))
     max_retries = 3
     for retry in range(max_retries):
         try:
@@ -117,8 +112,8 @@ for iRepeat in range(num_reps):
             break
         except RuntimeError as e:
             if retry == max_retries - 1:
-                print "Error starting mission",e
-                print "Is the game running?"
+                print("Error starting mission",e)
+                print("Is the game running?")
                 exit(1)
             else:
                 time.sleep(2)
@@ -168,7 +163,7 @@ for iRepeat in range(num_reps):
         time.sleep(0.1)
         
     # mission has ended.
-    print "Mission " + str(iRepeat+1) + ": Reward = " + str(reward)
+    print("Mission " + str(iRepeat+1) + ": Reward = " + str(reward))
     for error in world_state.errors:
-        print "Error:",error.text
+        print("Error:",error.text)
     time.sleep(0.5) # Give the mod a little time to prepare for the next mission.

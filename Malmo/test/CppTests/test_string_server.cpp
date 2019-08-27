@@ -47,16 +47,19 @@ void onMessageReceived( TimestampedString message )
     num_messages_received++;
 }
 
+Rpc rpc;
+
 bool testStringServer( bool withReply )
 {
     num_messages_received = 0;
     
     std::cout << "Starting server.." << std::endl;
     boost::asio::io_service io_service;
-    StringServer server( io_service, 0, onMessageReceived );
+    boost::shared_ptr<StringServer> server = boost::make_shared<StringServer>( io_service, 0, onMessageReceived, "test" );
+    server->start(server);
     if( withReply )
-        server.confirmWithFixedReply( expected_reply );
-    server.start();
+        server->confirmWithFixedReply( expected_reply );
+   
     boost::thread bt(boost::bind(&boost::asio::io_service::run, &io_service));
     
     const int num_messages_sent = 100;
@@ -67,14 +70,14 @@ bool testStringServer( bool withReply )
     std::cout << "Sending messages.." << std::endl;
     for( int i = 0; i < num_messages_sent; i++ ) {
         if( withReply ) {
-            std::string reply = SendStringAndGetShortReply(io_service, "127.0.0.1", server.getPort(), expected_message, true);
+            std::string reply = rpc.sendStringAndGetShortReply(io_service, "127.0.0.1", server->getPort(), expected_message, true);
             if( reply != expected_reply ) {
                 std::cout << "Unexpected reply." << std::endl;
                 return false;
             }
         }
         else
-            SendStringOverTCP(io_service, "127.0.0.1", server.getPort(), expected_message, true);
+            SendStringOverTCP(io_service, "127.0.0.1", server->getPort(), expected_message, true);
     }
     
     boost::this_thread::sleep( sleep_time ); // allow time for the messages to get through

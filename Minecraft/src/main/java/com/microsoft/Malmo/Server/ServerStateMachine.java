@@ -21,6 +21,7 @@ package com.microsoft.Malmo.Server;
 
 import java.lang.reflect.Field;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -34,12 +35,13 @@ import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.item.ItemStack;
 import net.minecraft.launchwrapper.Launch;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.management.ServerConfigurationManager;
-import net.minecraft.util.ChatComponentText;
-import net.minecraft.util.EnumChatFormatting;
+import net.minecraft.server.management.PlayerList;
+import net.minecraft.util.text.TextComponentString;
+import net.minecraft.util.text.TextFormatting;
+import net.minecraft.world.GameType;
 import net.minecraft.world.World;
-import net.minecraft.world.WorldSettings.GameType;
-import net.minecraft.world.biome.BiomeGenBase.SpawnListEntry;
+import net.minecraft.world.WorldServer;
+import net.minecraft.world.biome.Biome.SpawnListEntry;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.event.entity.living.LivingSpawnEvent.CheckSpawn;
 import net.minecraftforge.event.world.WorldEvent.PotentialSpawns;
@@ -59,6 +61,7 @@ import com.microsoft.Malmo.StateMachine;
 import com.microsoft.Malmo.MissionHandlerInterfaces.IWorldDecorator.DecoratorException;
 import com.microsoft.Malmo.MissionHandlers.MissionBehaviour;
 import com.microsoft.Malmo.Schemas.AgentSection;
+import com.microsoft.Malmo.Schemas.AgentStart.EnderBoxInventory;
 import com.microsoft.Malmo.Schemas.AgentStart.Inventory;
 import com.microsoft.Malmo.Schemas.DrawItem;
 import com.microsoft.Malmo.Schemas.EntityTypes;
@@ -91,20 +94,45 @@ public class ServerStateMachine extends StateMachine
     // agentConnectionWatchList is used to keep track of the clients in a multi-agent mission. If, at any point, a username appears in
     // this list, but can't be found in the MinecraftServer.getServer().getAllUsernames(), that constitutes an error, and the mission will exit.
     private ArrayList<String> userConnectionWatchList = new ArrayList<String>();
+    private ArrayList<String> userTurnSchedule = new ArrayList<String>();
 
     protected void clearUserConnectionWatchList()
     {
         this.userConnectionWatchList.clear();
     }
     
+    protected void clearUserTurnSchedule()
+    {
+        this.userTurnSchedule.clear();
+    }
+
+    protected String getNextAgentInTurnSchedule(String currentAgent)
+    {
+        int i = this.userTurnSchedule.indexOf(currentAgent);
+        if (i < 0)
+            return null;    // Big problem!
+        i += 1;
+        return this.userTurnSchedule.get(i % this.userTurnSchedule.size());
+    }
+
+    protected void removeFromTurnSchedule(String agent)
+    {
+        this.userTurnSchedule.remove(agent);    // Does nothing if the agent wasn't in the list to begin with.
+    }
+
     protected void addUsernameToWatchList(String username)
     {
         this.userConnectionWatchList.add(username); // Must be username, not agentname.
     }
-    
+
+    protected void setUserTurnSchedule(ArrayList<String> schedule)
+    {
+        this.userTurnSchedule = schedule;
+    }
+
     protected boolean checkWatchList()
     {
-        String[] connected_users = MinecraftServer.getServer().getAllUsernames();
+        String[] connected_users = FMLCommonHandler.instance().getMinecraftServerInstance().getOnlinePlayerNames();
         if (connected_users.length < this.userConnectionWatchList.size())
             return false;
 
@@ -159,7 +187,6 @@ public class ServerStateMachine extends StateMachine
     private void initBusses()
     {
         // Register ourself on the event busses, so we can harness the server tick:
-        FMLCommonHandler.instance().bus().register(this);
         MinecraftForge.EVENT_BUS.register(this);
     }
 
@@ -202,12 +229,13 @@ public class ServerStateMachine extends StateMachine
             if (allowSpawning && sic.getAllowedMobs() != null && !sic.getAllowedMobs().isEmpty())
             {
                 // Spawning is allowed, but restricted to our list:
-                Iterator<SpawnListEntry> it = ps.list.iterator();
+                Iterator<SpawnListEntry> it = ps.getList().iterator();
                 while (it.hasNext())
                 {
                     // Is this on our list?
                     SpawnListEntry sle = it.next();
-                    String mobName = EntityList.classToStringMapping.get(sle.entityClass).toString();
+                    net.minecraftforge.fml.common.registry.EntityEntry entry = net.minecraftforge.fml.common.registry.EntityRegistry.getEntry(sle.entityClass);
+                    String mobName = entry == null ? null : entry.getName();
                     boolean allowed = false;
                     for (EntityTypes mob : sic.getAllowedMobs())
                     {
@@ -244,7 +272,7 @@ public class ServerStateMachine extends StateMachine
             {
                 // Spawning is allowed, but restricted to our list.
                 // Is this mob on our list?
-                String mobName = EntityList.classToStringMapping.get(cs.entity.getClass()).toString();
+                String mobName = EntityList.getEntityString(cs.getEntity());
                 allowSpawning = false;
                 for (EntityTypes mob : sic.getAllowedMobs())
                 {
@@ -469,11 +497,12 @@ public class ServerStateMachine extends StateMachine
 
         protected void onReceiveMissionInit(MissionInit missionInit)
         {
+        	MinecraftServer server = FMLCommonHandler.instance().getMinecraftServerInstance();
             System.out.println("Mission received: " + missionInit.getMission().getAbout().getSummary());
-            ChatComponentText txtMission = new ChatComponentText("Received mission: " + EnumChatFormatting.BLUE + missionInit.getMission().getAbout().getSummary());
-            ChatComponentText txtSource = new ChatComponentText("Source: " + EnumChatFormatting.GREEN + missionInit.getClientAgentConnection().getAgentIPAddress());
-            MinecraftServer.getServer().getConfigurationManager().sendChatMsg(txtMission);
-            MinecraftServer.getServer().getConfigurationManager().sendChatMsg(txtSource);
+            TextComponentString txtMission = new TextComponentString("Received mission: " + TextFormatting.BLUE + missionInit.getMission().getAbout().getSummary());
+            TextComponentString txtSource = new TextComponentString("Source: " + TextFormatting.GREEN + missionInit.getClientAgentConnection().getAgentIPAddress());
+            server.getPlayerList().sendMessage(txtMission);
+            server.getPlayerList().sendMessage(txtSource);
 
             ServerStateMachine.this.currentMissionInit = missionInit;
             // Create the Mission Handlers
@@ -505,6 +534,8 @@ public class ServerStateMachine extends StateMachine
         @Override
         protected void execute()
         {
+        	MinecraftServer server = FMLCommonHandler.instance().getMinecraftServerInstance();
+        	World world = server.getEntityWorld();
             MissionBehaviour handlers = this.ssmachine.getHandlers();
             // Assume the world has been created correctly - now do the necessary building.
             boolean builtOkay = true;
@@ -512,7 +543,7 @@ public class ServerStateMachine extends StateMachine
             {
                 try
                 {
-                    handlers.worldDecorator.buildOnWorld(this.ssmachine.currentMissionInit());
+                    handlers.worldDecorator.buildOnWorld(this.ssmachine.currentMissionInit(), world);
                 }
                 catch (DecoratorException e)
                 {
@@ -531,7 +562,7 @@ public class ServerStateMachine extends StateMachine
             if (builtOkay)
             {
                 // Now set up other attributes of the environment (eg weather)
-                EnvironmentHelper.setMissionWeather(currentMissionInit());
+                EnvironmentHelper.setMissionWeather(currentMissionInit(), server.getEntityWorld().getWorldInfo());
                 episodeHasCompleted(ServerState.WAITING_FOR_AGENTS_TO_ASSEMBLE);
             }
         }
@@ -620,6 +651,9 @@ public class ServerStateMachine extends StateMachine
         // Map between usernames and agent names.
         private HashMap<String, String> usernameToAgentnameMap = new HashMap<String, String>();
 
+        // Map used to build turn schedule for turn-based agents.
+        private Map<Integer, String> userTurnScheduleMap = new HashMap<Integer, String>();
+
         protected WaitingForAgentsEpisode(ServerStateMachine machine)
         {
             super(machine);
@@ -627,6 +661,7 @@ public class ServerStateMachine extends StateMachine
             MalmoMod.MalmoMessageHandler.registerForMessage(this,  MalmoMessageType.CLIENT_AGENTRUNNING);
             
             ServerStateMachine.this.clearUserConnectionWatchList(); // We will build this up as agents join us.
+            ServerStateMachine.this.clearUserTurnSchedule();        // We will build this up too, if needed.
         }
 
         @Override
@@ -635,6 +670,44 @@ public class ServerStateMachine extends StateMachine
             super.cleanup();
             MalmoMod.MalmoMessageHandler.deregisterForMessage(this, MalmoMessageType.CLIENT_AGENTREADY);
             MalmoMod.MalmoMessageHandler.deregisterForMessage(this, MalmoMessageType.CLIENT_AGENTRUNNING);
+        }
+
+        private void addUsernameToTurnSchedule(String username, Integer requestedPosition)
+        {
+            // Agent "username" has requested a certain position in the turn schedule.
+            // Honour their request if possible.
+            // If they selected a free slot, put them in it. Otherwise, or if they didn't specify,
+            // give them an index which is guaranteed to be free, and which will be incorporated into
+            // the order once all agents have been added.
+            if (requestedPosition == null || this.userTurnScheduleMap.containsKey(requestedPosition))
+                requestedPosition = -this.userTurnScheduleMap.size();
+            this.userTurnScheduleMap.put(requestedPosition, username);
+        }
+
+        private void saveTurnSchedule()
+        {
+            if (this.userTurnScheduleMap.isEmpty())
+                return;
+
+            // Create an order from the map:
+            List<Integer> keys = new ArrayList<Integer>(this.userTurnScheduleMap.keySet());
+            Collections.sort(keys);
+            ArrayList<String> schedule = new ArrayList<String>();
+            // First add the agents with well-specified positions:
+            for (Integer i : keys)
+            {
+                if (i >= 0)
+                    schedule.add(this.userTurnScheduleMap.get(i));
+            }
+            // Now add the agents which didn't have well-specified positions.
+            // Add them in reverse order:
+            Collections.reverse(keys);
+            for (Integer i : keys)
+            {
+                if (i < 0)
+                    schedule.add(this.userTurnScheduleMap.get(i));
+            }
+            ServerStateMachine.this.setUserTurnSchedule(schedule);
         }
 
         @Override
@@ -654,7 +727,13 @@ public class ServerStateMachine extends StateMachine
                     this.usernameToAgentnameMap.put(username, agentname);
                     this.pendingRunningAgents.add(username);
                     ServerStateMachine.this.addUsernameToWatchList(username);   // Now we've got it, we need to watch it - if it disappears, that's an error.
-
+                    // Does this client want to be added to the turn scheduler?
+                    String requestedTurnPosition = data.get("turnPosition");
+                    if (requestedTurnPosition != null)
+                    {
+                        Integer pos = Integer.valueOf(requestedTurnPosition);
+                        addUsernameToTurnSchedule(username, pos);
+                    }
                     // If all clients have now joined, we can tell them to go ahead.
                     if (this.pendingReadyAgents.isEmpty())
                         onCastAssembled();
@@ -714,7 +793,7 @@ public class ServerStateMachine extends StateMachine
 
         private EntityPlayerMP getPlayerFromUsername(String username)
         {
-            ServerConfigurationManager scoman = MinecraftServer.getServer().getConfigurationManager();
+            PlayerList scoman = FMLCommonHandler.instance().getMinecraftServerInstance().getPlayerList();
             EntityPlayerMP player = scoman.getPlayerByUsername(username);
             return player;
         }
@@ -729,8 +808,8 @@ public class ServerStateMachine extends StateMachine
                 if ((player.getHealth() <= 0 || player.isDead || !player.isEntityAlive()))
                 {
                     player.markPlayerActive();
-                    player = MinecraftServer.getServer().getConfigurationManager().recreatePlayerEntity(player, player.dimension, false);
-                    player.playerNetServerHandler.playerEntity = player;
+                    player = FMLCommonHandler.instance().getMinecraftServerInstance().getPlayerList().recreatePlayerEntity(player, player.dimension, false);
+                    player.connection.playerEntity = player;
                 }
 
                 // Reset their food and health:
@@ -753,12 +832,12 @@ public class ServerStateMachine extends StateMachine
                 // Set their inventory:
                 if (as.getAgentStart().getInventory() != null)
                     initialiseInventory(player, as.getAgentStart().getInventory());
+                // And their Ender inventory:
+                if (as.getAgentStart().getEnderBoxInventory() != null)
+                    initialiseEnderInventory(player, as.getAgentStart().getEnderBoxInventory());
 
                 // Set their game mode to spectator for now, to protect them while we wait for the rest of the cast to assemble:
                 player.setGameType(GameType.SPECTATOR);
-                // Set the custom name.
-                // SetAgentNameMessage.SetAgentNameActor actor = new SetAgentNameMessage.SetAgentNameActor(player, agentname);
-                // actor.go();
             }
         }
 
@@ -836,7 +915,7 @@ public class ServerStateMachine extends StateMachine
             List<Object> extraHandlers = new ArrayList<Object>();
             Map<String, String> data = new HashMap<String, String>();
 
-            if (handlers.worldDecorator != null && handlers.worldDecorator.getExtraAgentHandlers(extraHandlers))
+            if (handlers.worldDecorator != null && handlers.worldDecorator.getExtraAgentHandlersAndData(extraHandlers, data))
             {
                 for (Object handler : extraHandlers)
                 {
@@ -853,6 +932,20 @@ public class ServerStateMachine extends StateMachine
                     }
                 }
             }
+            // Allow the world decorators to add themselves to the turn schedule if required.
+            if (handlers.worldDecorator != null)
+            {
+                ArrayList<String> participants = new ArrayList<String>();
+                ArrayList<Integer> participantSlots = new ArrayList<Integer>();
+                handlers.worldDecorator.getTurnParticipants(participants, participantSlots);
+                for (int i = 0; i < Math.min(participants.size(), participantSlots.size()); i++)
+                {
+                    addUsernameToTurnSchedule(participants.get(i), participantSlots.get(i));
+                }
+            }
+            // Save the turn schedule, if there is one:
+            saveTurnSchedule();
+
             // And tell them all they can proceed:
             MalmoMod.safeSendToAll(MalmoMessageType.SERVER_ALLPLAYERSJOINED, data);
         }
@@ -864,7 +957,7 @@ public class ServerStateMachine extends StateMachine
             // Do some tidying:
             resetPlayerGameTypes();
             // And tell all the clients to abort:
-            MalmoMod.safeSendToAll(MalmoMessageType.SERVER_ABORT);
+            MalmoMod.safeSendToAll(MalmoMessageType.SERVER_ABORT, errorData);
             // And abort ourselves:
             episodeHasCompleted(ServerState.ERROR);
         }
@@ -876,10 +969,24 @@ public class ServerStateMachine extends StateMachine
                 onError(null);  // We've lost a connection - abort the mission.
         }
 
+        private ItemStack itemStackFromInventoryObject(InventoryObjectType obj)
+        {
+            DrawItem di = new DrawItem();
+            di.setColour(obj.getColour());
+            di.setVariant(obj.getVariant());
+            di.setType(obj.getType());
+            ItemStack item = MinecraftTypeHelper.getItemStackFromDrawItem(di);
+            if( item != null )
+            {
+                item.setCount(obj.getQuantity());
+            }
+            return item;
+        }
+
         private void initialiseInventory(EntityPlayerMP player, Inventory inventory)
         {
             // Clear inventory:
-            player.inventory.func_174925_a(null, -1, -1, null);
+            player.inventory.clearMatchingItems(null, -1, -1, null);
             player.inventoryContainer.detectAndSendChanges();
             if (!player.capabilities.isCreativeMode)
                 player.updateHeldItem();
@@ -888,15 +995,24 @@ public class ServerStateMachine extends StateMachine
             for (JAXBElement<? extends InventoryObjectType> el : inventory.getInventoryObject())
             {
                 InventoryObjectType obj = el.getValue();
-                DrawItem di = new DrawItem();
-                di.setColour(obj.getColour());
-                di.setVariant(obj.getVariant());
-                di.setType(obj.getType());
-                ItemStack item = MinecraftTypeHelper.getItemStackFromDrawItem(di);
+                ItemStack item = itemStackFromInventoryObject(obj);
                 if( item != null )
                 {
-                    item.stackSize = obj.getQuantity();
                     player.inventory.setInventorySlotContents(obj.getSlot(), item);
+                }
+            }
+        }
+
+        private void initialiseEnderInventory(EntityPlayerMP player, EnderBoxInventory inventory)
+        {
+            player.getInventoryEnderChest().clear();
+            for (JAXBElement<? extends InventoryObjectType> el : inventory.getInventoryObject())
+            {
+                InventoryObjectType obj = el.getValue();
+                ItemStack item = itemStackFromInventoryObject(obj);
+                if( item != null )
+                {
+                    player.getInventoryEnderChest().setInventorySlotContents(obj.getSlot(), item);
                 }
             }
         }
@@ -929,6 +1045,7 @@ public class ServerStateMachine extends StateMachine
             // And register for the agent-finished message:
             MalmoMod.MalmoMessageHandler.registerForMessage(this, MalmoMessageType.CLIENT_AGENTFINISHEDMISSION);
             MalmoMod.MalmoMessageHandler.registerForMessage(this, MalmoMessageType.CLIENT_SHARE_REWARD);
+            MalmoMod.MalmoMessageHandler.registerForMessage(this, MalmoMessageType.CLIENT_TURN_TAKEN);
         }
 
         @Override
@@ -937,6 +1054,7 @@ public class ServerStateMachine extends StateMachine
             super.cleanup();
             MalmoMod.MalmoMessageHandler.deregisterForMessage(this, MalmoMessageType.CLIENT_AGENTFINISHEDMISSION);
             MalmoMod.MalmoMessageHandler.deregisterForMessage(this, MalmoMessageType.CLIENT_SHARE_REWARD);
+            MalmoMod.MalmoMessageHandler.deregisterForMessage(this, MalmoMessageType.CLIENT_TURN_TAKEN);
         }
 
         @Override
@@ -949,11 +1067,54 @@ public class ServerStateMachine extends StateMachine
                 if (agentName != null)
                 {
                     this.runningAgents.remove(agentName);
+                    // If this agent is part of a turn-based scenario, it no longer needs
+                    // to take its turn - we must remove it from the schedule or everything
+                    // else will stall waiting for it.
+                    ServerStateMachine.this.removeFromTurnSchedule(agentName);
                 }
             }
             else if (messageType == MalmoMessageType.CLIENT_SHARE_REWARD)
             {
                 MalmoMod.safeSendToAll(MalmoMessageType.SERVER_SHARE_REWARD, data);
+            }
+            else if (messageType == MalmoMessageType.CLIENT_TURN_TAKEN)
+            {
+                String agentName = data.get("agentname");
+                //String userName = data.get("username");
+                String nextAgentName = ServerStateMachine.this.getNextAgentInTurnSchedule(agentName);
+                if (nextAgentName == null)
+                {
+                    // Couldn't find the next agent in the turn schedule. Abort!
+                    String error = "ERROR IN TURN SCHEDULER - cannot find the successor to " +  agentName;
+                    saveErrorDetails(error);
+                    System.out.println(error);
+                    MalmoMod.safeSendToAll(MalmoMessageType.SERVER_ABORT);
+                    episodeHasCompleted(ServerState.ERROR);
+                }
+                else
+                {
+                    // Find the relevant agent; send a message to it.
+                    PlayerList scoman = FMLCommonHandler.instance().getMinecraftServerInstance().getPlayerList();
+                    EntityPlayerMP player = scoman.getPlayerByUsername(nextAgentName);
+                    if (player != null)
+                    {
+                        MalmoMod.network.sendTo(new MalmoMod.MalmoMessage(MalmoMessageType.SERVER_YOUR_TURN, ""), player);
+                    }
+                    else if (getHandlers().worldDecorator != null)
+                    {
+                        // Not a player - is it a world decorator?
+                        boolean handled = getHandlers().worldDecorator.targetedUpdate(nextAgentName);
+                        if (!handled)
+                        {
+                            // Couldn't reach the client whose turn it is, and doesn't seem to be a decorator's turn - abort!
+                            String error = "ERROR IN TURN SCHEDULER - could not find client for user " + nextAgentName;
+                            saveErrorDetails(error);
+                            System.out.println(error);
+                            MalmoMod.safeSendToAll(MalmoMessageType.SERVER_ABORT);
+                            episodeHasCompleted(ServerState.ERROR);
+                        }
+                    }
+                }
             }
         }
 
@@ -966,12 +1127,12 @@ public class ServerStateMachine extends StateMachine
             if (sic != null && sic.getTime() != null)
             {
                 boolean allowTimeToPass = (sic.getTime().isAllowPassageOfTime() != Boolean.FALSE);  // Defaults to true if unspecified.
-                MinecraftServer server = MinecraftServer.getServer();
-                if (server.worldServers != null && server.worldServers.length != 0)
+                MinecraftServer server = FMLCommonHandler.instance().getMinecraftServerInstance();
+                if (server.worlds != null && server.worlds.length != 0)
                 {
-                    for (int i = 0; i < MinecraftServer.getServer().worldServers.length; ++i)
+                    for (int i = 0; i < server.worlds.length; ++i)
                     {
-                        World world = MinecraftServer.getServer().worldServers[i];
+                        World world = server.worlds[i];
                         world.getGameRules().setOrCreateGameRule("doDaylightCycle", allowTimeToPass ? "true" : "false");
                         if (sic.getTime().getStartTime() != null)
                             world.setWorldTime(sic.getTime().getStartTime());
@@ -990,6 +1151,22 @@ public class ServerStateMachine extends StateMachine
 
             // Fire the starting pistol:
             MalmoMod.safeSendToAll(MalmoMessageType.SERVER_GO);
+            // And start the turn schedule turning, if there is one:
+            if (!ServerStateMachine.this.userTurnSchedule.isEmpty())
+            {
+                String agentName = ServerStateMachine.this.userTurnSchedule.get(0);
+                PlayerList scoman = FMLCommonHandler.instance().getMinecraftServerInstance().getPlayerList();
+                EntityPlayerMP player = scoman.getPlayerByUsername(agentName);
+                if (player != null)
+                {
+                    MalmoMod.network.sendTo(new MalmoMod.MalmoMessage(MalmoMessageType.SERVER_YOUR_TURN, ""), player);
+                }
+                else if (getHandlers().worldDecorator != null)
+                {
+                    // Not a player - is it a world decorator?
+                    getHandlers().worldDecorator.targetedUpdate(agentName);
+                }
+            }
         }
 
         @Override
@@ -1000,7 +1177,7 @@ public class ServerStateMachine extends StateMachine
             
             if (!ServerStateMachine.this.checkWatchList())
                 onError(null);  // We've lost a connection - abort the mission.
-            
+
             if (ev.phase == Phase.START)
             {
                 // Measure our performance - especially useful if we've been overclocked.
@@ -1019,14 +1196,12 @@ public class ServerStateMachine extends StateMachine
                 this.tickCount++;
             }
 
+        	MinecraftServer server = FMLCommonHandler.instance().getMinecraftServerInstance();
+
             if (ev.phase == Phase.END && getHandlers() != null && getHandlers().worldDecorator != null)
             {
-                MinecraftServer server = MinecraftServer.getServer();
-                if (server.worldServers != null && server.worldServers.length != 0)
-                {
-                    World world = server.getEntityWorld();
-                    getHandlers().worldDecorator.update(world);
-                }
+                World world = server.getEntityWorld();
+                getHandlers().worldDecorator.update(world);
             }
 
             if (ev.phase == Phase.END)
@@ -1045,9 +1220,9 @@ public class ServerStateMachine extends StateMachine
                 // We set the weather just after building the world, but it's not a permanent setting,
                 // and apparently there is a known bug in Minecraft that means the weather sometimes changes early.
                 // To get around this, we reset it periodically.
-                if (MinecraftServer.getServer().getTickCounter() % 500 == 0)
+                if (server.getTickCounter() % 500 == 0)
                 {
-                    EnvironmentHelper.setMissionWeather(currentMissionInit());
+                    EnvironmentHelper.setMissionWeather(currentMissionInit(), server.getEntityWorld().getWorldInfo());
                 }
             }
         }

@@ -19,6 +19,8 @@
 
 package com.microsoft.Malmo.MissionHandlers;
 
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 
 import com.microsoft.Malmo.MissionHandlerInterfaces.IAudioProducer;
@@ -38,7 +40,7 @@ import com.microsoft.Malmo.Schemas.ServerHandlers;
  */
 public class MissionBehaviour
 {
-    public IVideoProducer videoProducer = null;
+    public List<IVideoProducer> videoProducers = new ArrayList<IVideoProducer>();
     public IAudioProducer audioProducer = null;
     public ICommandHandler commandHandler = null;
     public IObservationProducer observationProducer = null;
@@ -85,7 +87,7 @@ public class MissionBehaviour
 
     private void reset()
     {
-        this.videoProducer = null;
+        this.videoProducers = new ArrayList<IVideoProducer>();
         this.audioProducer = null;
         this.commandHandler = null;
         this.observationProducer = null;
@@ -178,10 +180,10 @@ public class MissionBehaviour
     
     private void addVideoProducer(IVideoProducer handler)
     {
-        if (this.videoProducer != null)
-            this.failedHandlers += "Too many video producers specified - only one allowed at present.\n";
+        if (this.videoProducers.size() > 0 && (this.videoProducers.get(0).getHeight() != handler.getHeight() || this.videoProducers.get(0).getWidth() != handler.getWidth()))
+            this.failedHandlers += "If multiple video producers are specified, they must all share the same dimensions.\n";
         else
-            this.videoProducer = handler;
+            this.videoProducers.add(handler);
     }
     
     private void addAudioProducer(IAudioProducer handler)
@@ -321,5 +323,42 @@ public class MissionBehaviour
             this.failedHandlers += "Failed to access " + handlerClass + "\n";
         }
         return handler;
+    }
+
+    /** This method gives our handlers a chance to add any information to the ping message
+     * which the client sends (repeatedly) to the server while the agents are assembling.
+     * This message is guaranteed to get through to the server, so it is a good place to
+     * communicate.
+     * (NOTE this is called BEFORE addExtraHandlers - but that mechanism is provided to allow
+     * the *server* to add extra handlers on the *client* - so the server should already know
+     * whatever the extra handlers might want to tell it!)
+     * @param map the map of data passed to the server
+     */
+    public void appendExtraServerInformation(HashMap<String, String> map)
+    {
+        List<HandlerBase> handlers = getClientHandlerList();
+        for (HandlerBase handler : handlers)
+            handler.appendExtraServerInformation(map);
+    }
+
+    protected List<HandlerBase> getClientHandlerList()
+    {
+        List<HandlerBase> handlers = new ArrayList<HandlerBase>();
+        for (IVideoProducer vp : this.videoProducers)
+        {
+            if (vp != null && vp instanceof HandlerBase)
+                handlers.add((HandlerBase)vp);
+        }
+        if (this.audioProducer != null && this.audioProducer instanceof HandlerBase)
+            handlers.add((HandlerBase)this.audioProducer);
+        if (this.commandHandler != null && this.commandHandler instanceof HandlerBase)
+            handlers.add((HandlerBase)this.commandHandler);
+        if (this.observationProducer != null && this.observationProducer instanceof HandlerBase)
+            handlers.add((HandlerBase)this.observationProducer);
+        if (this.rewardProducer != null && this.rewardProducer instanceof HandlerBase)
+            handlers.add((HandlerBase)this.rewardProducer);
+        if (this.quitProducer != null && this.quitProducer instanceof HandlerBase)
+            handlers.add((HandlerBase)this.quitProducer);
+        return handlers;
     }
 }

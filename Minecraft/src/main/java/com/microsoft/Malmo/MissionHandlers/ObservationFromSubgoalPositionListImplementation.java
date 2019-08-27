@@ -22,7 +22,6 @@ package com.microsoft.Malmo.MissionHandlers;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.entity.EntityPlayerSP;
 
-import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.microsoft.Malmo.MissionHandlerInterfaces.IObservationProducer;
 import com.microsoft.Malmo.Schemas.MissionInit;
@@ -51,7 +50,7 @@ public class ObservationFromSubgoalPositionListImplementation extends HandlerBas
         boolean foundNextPoint = false;
         double targetx = 0;
         double targetz = 0;
-        EntityPlayerSP player = Minecraft.getMinecraft().thePlayer;
+        EntityPlayerSP player = Minecraft.getMinecraft().player;
         if (player == null)
             return; // Nothing we can do.
 

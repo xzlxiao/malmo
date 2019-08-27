@@ -1,3 +1,4 @@
+from __future__ import print_function
 # ------------------------------------------------------------------------------------------------
 # Copyright (c) 2016 Microsoft Corporation
 # 
@@ -17,6 +18,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 # ------------------------------------------------------------------------------------------------
 
+from builtins import range
 import MalmoPython
 import os
 import random
@@ -25,8 +27,16 @@ import time
 import json
 import random
 import errno
+import malmoutils
 
-def GetMissionXML():
+malmoutils.fix_print()
+
+agent_host = MalmoPython.AgentHost()
+malmoutils.parse_command_line(agent_host)
+recordingsDirectory = malmoutils.get_recordings_directory(agent_host)
+video_requirements = malmoutils.get_video_xml(agent_host)
+    
+def getMissionXML():
     return '''<?xml version="1.0" encoding="UTF-8" ?>
     <Mission xmlns="http://ProjectMalmo.microsoft.com" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
         <About>
@@ -53,7 +63,7 @@ def GetMissionXML():
                 <Inventory>
                 </Inventory>
             </AgentStart>
-            <AgentHandlers>
+            <AgentHandlers>''' + video_requirements + '''
                 <RewardForMissionEnd rewardForDeath="-1000.0">
                     <Reward description="out_of_time" reward="-900.0"/>
                     <Reward description="found_goal" reward="100000.0"/>
@@ -75,7 +85,7 @@ def getAnimation():
     # Create a slowly descending roof...
     # And an orbiting pumpkin with its own skull sattelite.
     xml=""
-    for x in xrange(4):
+    for x in range(4):
         xml+='''
             <AnimationDecorator ticksPerUpdate="10">
                 <Linear>
@@ -132,27 +142,10 @@ def getAnimation():
                 </DrawingDecorator>
             </AnimationDecorator>'''
 
-sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', 0)  # flush print output immediately
-
-recordingsDirectory="AnimationRecordings"
-try:
-    os.makedirs(recordingsDirectory)
-except OSError as exception:
-    if exception.errno != errno.EEXIST: # ignore error if already existed
-        raise
-
 validate = True
-my_mission = MalmoPython.MissionSpec(GetMissionXML(),validate)
-agent_host = MalmoPython.AgentHost()
-try:
-    agent_host.parse( sys.argv )
-except RuntimeError as e:
-    print 'ERROR:',e
-    print agent_host.getUsage()
-    exit(1)
-if agent_host.receivedArgument("help"):
-    print agent_host.getUsage()
-    exit(0)
+missionXML = getMissionXML()
+
+my_mission = MalmoPython.MissionSpec(missionXML, validate)
 
 my_client_pool = MalmoPython.ClientPool()
 my_client_pool.add(MalmoPython.ClientInfo("127.0.0.1", 10000))
@@ -164,9 +157,13 @@ else:
 
 for iRepeat in range(num_reps):
     # Set up a recording
-    my_mission_record = MalmoPython.MissionRecordSpec(recordingsDirectory + "//" + "Mission_" + str(iRepeat) + ".tgz")
-    my_mission_record.recordRewards()
-    my_mission_record.recordMP4(24,400000)
+    my_mission_record = MalmoPython.MissionRecordSpec()
+    if recordingsDirectory:
+        my_mission_record.setDestination(recordingsDirectory + "//" + "Animation_" + str(iRepeat + 1) + ".tgz")
+        my_mission_record.recordRewards()
+        if video_requirements:
+            my_mission_record.recordMP4(24,2000000)
+
     max_retries = 3
     for retry in range(max_retries):
         try:
@@ -175,8 +172,8 @@ for iRepeat in range(num_reps):
             break
         except RuntimeError as e:
             if retry == max_retries - 1:
-                print "Error starting mission",e
-                print "Is the game running?"
+                print("Error starting mission",e)
+                print("Is the game running?")
                 exit(1)
             else:
                 time.sleep(2)
@@ -197,10 +194,10 @@ for iRepeat in range(num_reps):
             # A reward signal has come in - see what it is:
             delta = world_state.rewards[0].getValue()
             if delta != 0:
-                print "New reward: " + str(delta)
+                print("New reward: " + str(delta))
                 reward += delta
         time.sleep(0.1)
         
     # mission has ended.
-    print "Mission " + str(iRepeat+1) + ": Reward = " + str(reward)
+    print("Mission " + str(iRepeat+1) + ": Reward = " + str(reward))
     time.sleep(0.5) # Give the mod a little time to prepare for the next mission.

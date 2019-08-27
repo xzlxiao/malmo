@@ -20,9 +20,11 @@
 package com.microsoft.Malmo;
 
 import java.util.ArrayList;
+import java.util.logging.Level;
 
 import net.minecraftforge.common.MinecraftForge;
-import net.minecraftforge.fml.common.FMLCommonHandler;
+
+import com.microsoft.Malmo.Utils.TCPUtils;
 
 /**
  * Class designed to track and control the state of the mod, especially regarding mission launching/running.<br>
@@ -81,7 +83,6 @@ abstract public class StateMachine
         this.homeThread = Thread.currentThread();
         
         // Register the EventWrapper on the event busses:
-        FMLCommonHandler.instance().bus().register(this.eventWrapper);
         MinecraftForge.EVENT_BUS.register(this.eventWrapper);
     }
     
@@ -99,6 +100,7 @@ abstract public class StateMachine
             if (this.state != toState)
             {
                 System.out.println(getName() + " enter state: " + toState);
+                TCPUtils.Log(Level.INFO, "======== " + getName() + " enter state: " + toState + " ========");
                 this.state = toState;
                 onPreStateChange(toState);
                 onStateChange();
@@ -141,26 +143,26 @@ abstract public class StateMachine
             }
             this.stateQueue.add(state);
             System.out.println(getName() + " request state: " + state);
+            TCPUtils.Log(Level.INFO, "-------- " + getName() + " request state: " + state + " --------");
         }
     }
 
     /** Call this regularly to give the state machine a chance to transition to the next state.<br>
      * Must be called from the home thread.
      */
-    public void updateState()
-    {
-    	if (Thread.currentThread() == this.homeThread)
-    	{
-		    // Check the state queue to see if we need to carry out a transition:
-		    synchronized(this.stateQueue)
-		    {
-		        if (this.stateQueue.size() > 0)
-		        {
-		            IState state = this.stateQueue.remove(0);
-		            setState(state);   // Transition to the next state.
-		        }
-		    }
-    	}
+    public void updateState() {
+        if (Thread.currentThread() == this.homeThread) {
+            IState state = null;
+            // Check the state queue to see if we need to carry out a transition:
+            synchronized (this.stateQueue) {
+                if (this.stateQueue.size() > 0) {
+                    state = this.stateQueue.remove(0);
+                }
+            }
+            if (state != null) {
+                setState(state);   // Transition to the next state.
+            }
+        }
     }
 
     /** Used mainly for diagnostics - override to return a human-readable name for your state machine.

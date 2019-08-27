@@ -1,3 +1,4 @@
+from __future__ import print_function
 # ------------------------------------------------------------------------------------------------
 # Copyright (c) 2016 Microsoft Corporation
 # 
@@ -19,6 +20,9 @@
 
 # Used for integration tests.
 
+from builtins import str
+from builtins import range
+import io
 import os
 import platform
 import socket
@@ -26,39 +30,70 @@ import subprocess
 import sys
 import time
 
-sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', 0)  # flush print output immediately
 
-def PortHasListener( port ):
+def _port_has_listener(port):
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    result = sock.connect_ex( ('127.0.0.1',port) )
+    result = sock.connect_ex(('127.0.0.1', port))
     sock.close()
     return result == 0
-    
-for port in [ 10000, 10001 ]:
 
-    if PortHasListener( port ):
-        print 'Something is listening on port',port,'- will assume Minecraft is running.'
-        continue
-        
-    print 'Nothing is listening on port',port,'- will attempt to launch Minecraft from a new terminal.'
-    if os.name == 'nt':
-        os.startfile("launchClient.bat")
-    elif sys.platform == 'darwin':
-        subprocess.Popen(['open', '-a', 'Terminal.app', 'launchClient.sh'])
-    elif platform.linux_distribution()[0] == 'Fedora':
-        subprocess.Popen( "gnome-terminal -e ./launchClient.sh", close_fds=True, shell=True )
-    else:
-        subprocess.Popen( "x-terminal-emulator -e ./launchClient.sh", close_fds=True, shell=True )
 
-    print 'Giving Minecraft some time to launch... '
-    launched = False
-    for i in xrange( 100 ):
-        print '.',
-        time.sleep( 3 )
-        if PortHasListener( port ):
-            print 'ok'
-            launched = True
-            break
-    if not launched:
-        print 'Minecraft not yet launched. Giving up.'
-        exit(1)
+def launch_minecraft_in_background(minecraft_path, ports=None, timeout=360, replaceable=False, score=False):
+    if ports is None:
+        ports = []
+    if len(ports) == 0:
+        ports = [10000]  # Default
+    processes = []
+    for port in ports:
+        if _port_has_listener(port):
+            print('Something is listening on port', port, '- will assume Minecraft is running.')
+            continue
+        replaceable_arg = " -replaceable " if replaceable else ""
+        scorepolicy_arg = " -scorepolicy " if score else ""
+        scorepolicy_value = " 2 " if score else ""
+        print('Nothing is listening on port', port, '- will attempt to launch Minecraft from a new terminal.')
+        if os.name == 'nt':
+            args = [minecraft_path + '/launchClient.bat', '-port', str(port), replaceable_arg.strip(),
+                    scorepolicy_arg.strip(), scorepolicy_value.strip()]
+            p = subprocess.Popen([arg for arg in args if arg != ""],
+                                 creationflags=subprocess.CREATE_NEW_CONSOLE, close_fds=True)
+        elif sys.platform == 'darwin':
+            # Can't pass parameters to launchClient via Terminal.app, so create a small launch
+            # script instead.
+            # (Launching a process to run the terminal app to run a small launch script to run
+            # the launchClient script to run Minecraft... is it possible that this is not the most
+            # straightforward way to go about things?)
+            launcher_file = "/tmp/launcher_" + str(os.getpid()) + ".sh"
+            tmp_file = open(launcher_file, "w")
+            tmp_file.write(minecraft_path + '/launchClient.sh -port ' + str(port) +
+                           replaceable_arg + scorepolicy_arg + scorepolicy_value)
+            tmp_file.close()
+            os.chmod(launcher_file, 0o700)
+            p = subprocess.Popen(['open', '-a', 'Terminal.app', launcher_file])
+        else:
+            p = subprocess.Popen(minecraft_path + "/launchClient.sh -port " + str(port) +
+                                 replaceable_arg + scorepolicy_arg + scorepolicy_value,
+                                 close_fds=True, shell=True,
+                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        processes.append(p)
+        print('Giving Minecraft some time to launch... ')
+        launched = False
+        for _ in range(timeout // 3):
+            print('.', end=' ')
+            time.sleep(3)
+            if _port_has_listener(port):
+                print('ok')
+                launched = True
+                break
+        if not launched:
+            print('Minecraft not yet launched. Giving up.')
+            exit(1)
+    return processes
+
+
+if __name__ == "__main__":
+    minecraft_launch_path = os.path.dirname(os.path.abspath(__file__))
+    launch_ports = [int(port_arg) for port_arg in sys.argv[1:] if port_arg != "--replaceable" and port_arg != "--score"]
+    launch_minecraft_in_background(minecraft_launch_path, launch_ports, 300, 
+                                   replaceable="--replaceable" in sys.argv,
+                                   score="--score" in sys.argv)

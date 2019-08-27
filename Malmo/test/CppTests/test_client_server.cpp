@@ -46,8 +46,8 @@ int main()
 {
     std::cout << "Starting server.." << std::endl;
     boost::asio::io_service io_service;
-    TCPServer server( io_service, 0, onMessageReceived );
-    server.start();
+    TCPServer server( io_service, 0, onMessageReceived, "test_client_server" );
+    server.start(nullptr);
     boost::thread bt(boost::bind(&boost::asio::io_service::run, &io_service));
     
     const int num_messages_sent = 100;

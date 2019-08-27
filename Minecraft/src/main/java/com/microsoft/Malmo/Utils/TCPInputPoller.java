@@ -23,13 +23,17 @@ import java.io.BufferedReader;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketException;
 import java.util.ArrayList;
+import java.util.logging.Level;
 
 /** Class which polls for TCP commands in the background, and makes them available via a thread-safe queue.<br>
- * Used for receiving control commands from the Malmo code.
+ * Used for receiving control commands from the Malmo code. By default a client connection is used to service
+ * multiple request / reply interaction which can lead to connections remaining open. Use constructor with
+ * singleRequestReply set to false if only one interaction is to be served.
  */
 public class TCPInputPoller extends Thread
 {
@@ -52,6 +56,10 @@ public class TCPInputPoller extends Thread
     private boolean choosePortRandomly = false;
     private ServerSocket serverSocket;
     private boolean failedToCreate = false;
+    private String logname;
+    private int connection_count = 0;
+
+    private boolean singleRequestReply = false;
 
     /**
      * Manually add a command to the command queue.<br>
@@ -66,40 +74,68 @@ public class TCPInputPoller extends Thread
         }
     }
 
+    private void Log(Level level, String message)
+    {
+        TCPUtils.Log(level, "->" + this.logname + "(" + this.requestedPortNumber + ") " + message );
+    }
+
+    private void SysLog(Level level, String message)
+    {
+        TCPUtils.SysLog(level, "->" + this.logname + "(" + this.requestedPortNumber + ") " + message );
+    }
+
     /** Create a new TCPInputPoller to sit and await messages on the specified port.
      * @param port port to listen on.
+     * @param logname Name used in log messages.
      */
-    public TCPInputPoller(int port)
+    public TCPInputPoller(int port, String logname)
     {
         this.requestedPortNumber = port;
         this.commandQueue = new ArrayList<CommandAndIPAddress>();
+        this.logname = logname;
     }
 
     /** Create a new TCPInputPoller to sit and await messages on a port which is dynamically allocated from a range.
      * @param portmin minimum valid port number (inclusive)
      * @param portmax maximum valid port number (inclusive)
      * @param choosePortRandomly if true, choose a free port from the range at random; otherwise choose the next free port in the range.
+     * @param logname Name used in log messages.
      */
-    public TCPInputPoller(int portmin, int portmax, boolean choosePortRandomly)
+    public TCPInputPoller(int portmin, int portmax, boolean choosePortRandomly, String logname)
     {
         this.requestedPortNumber = 0;	// 0 means allocate dynamically.
         this.portRangeMax = portmax;
         this.portRangeMin = portmin;
         this.choosePortRandomly = choosePortRandomly;
         this.commandQueue = new ArrayList<CommandAndIPAddress>();
+        this.logname = logname;
     }
 
     /** Create a new TCPInputPoller to sit and await messages on the port which is either specified, or chosen from the range.
      * @param requestedPort if non-zero, the specific port to use - otherwise choose a port sequentially from the range.
      * @param portmin minimum valid port number (inclusive)
      * @param portmax maximum valid port number (inclusive)
+     * @param logname Name used in log messages.
      */
-    public TCPInputPoller(int requestedPort, int portmin, int portmax)
+    public TCPInputPoller(int requestedPort, int portmin, int portmax, String logname)
     {
         this.requestedPortNumber = requestedPort;
         this.portRangeMax = Math.max(portmin,  portmax);
         this.portRangeMin = Math.min(portmin,  portmax);
         this.commandQueue = new ArrayList<CommandAndIPAddress>();
+        this.logname = logname;
+    }
+
+    /** Create a new TCPInputPoller to sit and await messages on the port which is either specified, or chosen from the range.
+     * @param requestedPort if non-zero, the specific port to use - otherwise choose a port sequentially from the range.
+     * @param portmin minimum valid port number (inclusive)
+     * @param portmax maximum valid port number (inclusive)
+     * @param singleRequestReply process a single request / reply interaction ff true.
+     * @param logname Name used in log messages.
+     */
+    public TCPInputPoller(int requestedPort, int portmin, int portmax, boolean singleRequestReply, String logname) {
+        this(requestedPort, portmin, portmax, logname);
+        this.singleRequestReply = singleRequestReply;
     }
 
     /** Pop the oldest command from our list and return it.
@@ -149,6 +185,7 @@ public class TCPInputPoller extends Thread
      */
     public void stopServer()
     {
+        Log(Level.INFO, "Attempting to stop SocketServer");
         keepRunning = false;
         // Thread will be blocked waiting for input - unblock it by closing the socket underneath it:
         if (this.serverSocket != null)
@@ -159,8 +196,7 @@ public class TCPInputPoller extends Thread
             }
             catch (IOException e)
             {
-                // TODO Auto-generated catch block
-                e.printStackTrace();
+                Log(Level.WARNING, "Something happened when closing SocketServer: " + e);
             }
             this.serverSocket = null;
         }
@@ -175,40 +211,49 @@ public class TCPInputPoller extends Thread
         this.serverSocket = null;
         try
         {
+            Log(Level.INFO, "Attempting to create SocketServer...");
             // If requrestedPortNumber is 0 and we have a range of ports specified, then attempt to allocate a port dynamically from that range.
-            if (this.requestedPortNumber == 0 && this.portRangeMax != -1 && this.portRangeMin != -1)
-                this.serverSocket = TCPSocketHelper.getSocketInRange(this.portRangeMin, this.portRangeMax, this.choosePortRandomly);
-            else	// Attempt to use the requested port - if it's 0, the system will allocate one dynamically.
+            if (this.requestedPortNumber == 0 && this.portRangeMax != -1 && this.portRangeMin != -1) {
+                this.serverSocket = TCPUtils.getSocketInRange(this.portRangeMin, this.portRangeMax, this.choosePortRandomly);
+                if (this.serverSocket == null)
+                    throw new Exception("Could not allocate port from range.");
+            } else	// Attempt to use the requested port - if it's 0, the system will allocate one dynamically.
                 this.serverSocket = new ServerSocket(this.requestedPortNumber);	// Use the specified port number
         }
         catch (Exception e)
         {
-            System.out.println("Failed to create socket server on port " + requestedPortNumber);
+            SysLog(Level.SEVERE, "Failed to create SocketServer: " + e);
             this.failedToCreate = true;
             return;
         }
 
-        System.out.println("Listening for messages on port " + this.serverSocket.getLocalPort());
+        SysLog(Level.INFO, "Listening for messages on port " + this.serverSocket.getLocalPort());
 
         while (keepRunning)
         {
             Socket socket = null;
             try
             {
+                Log(Level.INFO, "Waiting for incoming message...");
                 socket = this.serverSocket.accept();
+                if (socket != null)
+                    Log(Level.INFO, "Connected to: " + socket.getLocalAddress() + "(local), " + socket.getRemoteSocketAddress() + "(remote)");
+                else
+                    Log(Level.WARNING, "Accept() returns a null socket!?");
             }
             catch (SocketException e)
             {
-                System.out.println("No socket found - ServerSocket was probably closed under our feet - normal for stopping polling.");
+                SysLog(Level.INFO, "Socket exception - usually caused by ServerSocket being closed under our feet (normal for stopping polling): " + e);
             }
             catch (IOException e)
             {
-                System.out.println("Failed to accept socket request.");
+                SysLog(Level.SEVERE, "Failed to accept socket request: " + e);
             }
 
             if (socket != null)
             {
-                Runnable connectionHandler = new TCPConnectionHandler(socket, this);
+                this.connection_count++;
+                Runnable connectionHandler = new TCPConnectionHandler(socket, this, this.logname + ":S#" + this.connection_count);
                 new Thread(connectionHandler).start();
             }
         }
@@ -217,15 +262,18 @@ public class TCPInputPoller extends Thread
         {
             try
             {
+                Log(Level.INFO, "Closing server socket...");
                 this.serverSocket.close();
+                Log(Level.INFO, "...closed okay.");
             }
             catch (IOException e)
             {
+                Log(Level.SEVERE, "Something went wrong closing server socket: " + e);
             }
         }
     }
 
-    protected void commandReceived(String command, String ipOriginator, DataOutputStream dos)
+    public void commandReceived(String command, String ipOriginator, DataOutputStream dos)
     {
         synchronized(this)
         {
@@ -299,12 +347,19 @@ public class TCPInputPoller extends Thread
     public class TCPConnectionHandler extends Thread
     {
         private Socket socket;
-        TCPInputPoller poller;
+        private TCPInputPoller poller;
+        private String logname;
 
-        public TCPConnectionHandler(Socket socket, TCPInputPoller poller)
+        public TCPConnectionHandler(Socket socket, TCPInputPoller poller, String logname)
         {
             this.socket = socket;
             this.poller = poller;
+            this.logname = logname;
+        }
+
+        private void Log(Level level, String message)
+        {
+            TCPUtils.Log(level, "->" + this.logname + " " + message);
         }
 
         public void run()
@@ -312,6 +367,7 @@ public class TCPInputPoller extends Thread
             final int MAX_STR_LEN = 10000000;
             try
             {
+                Log(Level.INFO, "About to try reading inputstream...");
                 BufferedReader br = new BufferedReader(new InputStreamReader(this.socket.getInputStream()));
                 StringBuffer sb = new StringBuffer();
                 int intC;
@@ -321,25 +377,34 @@ public class TCPInputPoller extends Thread
                     if (c == '\n')
                     {
                         String command = sb.toString();
-                        String ipOriginator = this.socket.getInetAddress().getHostAddress();
+                        Log(Level.FINE, "Received this: " + command);
+                        InetAddress address = this.socket.getInetAddress();
+                        Log(Level.INFO, "Read line from " + this.socket.getRemoteSocketAddress() + "(remote), " + address.getHostName() + "(hostname) " + address.getHostAddress() + "(hostaddress)");
+                        String originator = address.getHostName();
                         DataOutputStream dos = new DataOutputStream(this.socket.getOutputStream());
-                        poller.commandReceived(command, ipOriginator, dos);
+                        poller.commandReceived(command, originator, dos);
+                        if (singleRequestReply) {
+                            // Stop handling the connection after one interaction.
+                            this.socket.close();
+                            return;
+                        }
                         sb.setLength(0);
                     }
-                    else 
+                    else
                     {
                         sb.append(c);
                     }
                     if (sb.length() >= MAX_STR_LEN) {
                         DataOutputStream dos = new DataOutputStream(this.socket.getOutputStream());
                         poller.onError("MALMOERROR Input too long", dos);
+                        Log(Level.WARNING, "Input too long (greater than " + MAX_STR_LEN + ") - discarding.");
                         break; // discard anything else we received
                     }
                 }
             }
             catch (IOException e)
             {
-                System.out.println("~~~~~~~~ Socket stream error: " + e);
+                Log(Level.SEVERE, "Socket stream error: " + e);
             }
         }
     }

@@ -1,3 +1,4 @@
+from __future__ import print_function
 # ------------------------------------------------------------------------------------------------
 # Copyright (c) 2016 Microsoft Corporation
 # 
@@ -24,6 +25,7 @@
 #
 # If everything is working correctly, the agent should ride around happily forever.
 
+from builtins import range
 import MalmoPython
 import os
 import random
@@ -33,13 +35,9 @@ import json
 import random
 import re
 import math
-from collections import namedtuple
 
 # For a bit more fun, set MOB_TYPE = "Creeper"...
 MOB_TYPE = "Villager"
-
-EntityInfo = namedtuple('EntityInfo', 'x, y, z, name, colour, variation, quantity')
-EntityInfo.__new__.__defaults__ = (0, 0, 0, "", "", "", 1)
 
 def drawrailline(x1, z1, x2, z2, y):
     ''' Draw a powered rail between the two points '''
@@ -91,7 +89,7 @@ def drawloop(radius, y):
 def drawloops(radius, y):
     ''' Draw a set of concentric loops '''
     loops=""
-    for i in xrange(radius, 1, -2):
+    for i in range(radius, 1, -2):
         loops += drawloop(i, y)
         y += 1
     return loops
@@ -113,7 +111,7 @@ def drawstep(radius, y, type, half):
 def drawsteps(radius, y):
     ''' Draw a pyramid of steps '''
     steps = ""
-    for i in xrange(radius, 1, -2):
+    for i in range(radius, 1, -2):
         steps += drawstep(i, y, "quartz_stairs", "bottom")
         steps += drawstep(i, y-1, "dark_oak_stairs", "top")
         y += 1
@@ -122,7 +120,7 @@ def drawsteps(radius, y):
 def drawlinks(radius, y):
     ''' Link each circuit of powered rail into the adjacent inner loop '''
     links=""
-    for i in xrange(radius, 1, -2):
+    for i in range(radius, 1, -2):
         links += drawlink(i, y)
         y += 1
     return links
@@ -159,7 +157,7 @@ def drawHilbert(level, x, y, z):
     curve = a
     
     # Perform repeated substitutions:
-    for i in xrange(level):
+    for i in range(level):
         curve = expand_pattern.sub(expand_func, curve)
 
     # Remove the fluff:
@@ -198,9 +196,9 @@ def drawHilbert(level, x, y, z):
 def calcYawToMob(entities, x, y, z):
     ''' Find the mob we are following, and calculate the yaw we need in order to face it '''
     for ent in entities:
-        if ent.name == MOB_TYPE:
-            dx = ent.x - x
-            dz = ent.z - z
+        if ent['name'] == MOB_TYPE:
+            dx = ent['x'] - x
+            dz = ent['z'] - z
             yaw = -180 * math.atan2(dx, dz) / math.pi
             return yaw
     return 0
@@ -209,11 +207,11 @@ agent_host = MalmoPython.AgentHost()
 try:
     agent_host.parse( sys.argv )
 except RuntimeError as e:
-    print 'ERROR:',e
-    print agent_host.getUsage()
+    print('ERROR:',e)
+    print(agent_host.getUsage())
     exit(1)
 if agent_host.receivedArgument("help"):
-    print agent_host.getUsage()
+    print(agent_host.getUsage())
     exit(0)
 
 endCondition = ""
@@ -297,10 +295,10 @@ missionXML = '''<?xml version="1.0" encoding="UTF-8" ?>
                     ''' + drawHilbert(4,16,34,16) + '''
                     
                     <!-- Give the player a Minecart -->
-                    <DrawEntity x="18.5" y="56" z="20.5" type="Minecart"/>
+                    <DrawEntity x="18.5" y="56" z="20.5" type="MinecartRideable"/>
                     
                     <!-- And something amusing to follow -->
-                    <DrawEntity x="20.5" y="56" z="16.5" xVel="0" yVel="0" zVel="-1" type="Minecart"/>
+                    <DrawEntity x="20.5" y="56" z="16.5" xVel="0" yVel="0" zVel="-1" type="MinecartRideable"/>
                     <DrawEntity x="20.5" y="56" z="16.5" type="''' + MOB_TYPE + '''"/>
                 </DrawingDecorator>''' + timeoutCondition + '''
                 <ServerQuitWhenAnyAgentFinishes />
@@ -327,7 +325,11 @@ missionXML = '''<?xml version="1.0" encoding="UTF-8" ?>
 
     </Mission>'''
 
-sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', 0)  # flush print output immediately
+if sys.version_info[0] == 2:
+    sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', 0)  # flush print output immediately
+else:
+    import functools
+    print = functools.partial(print, flush=True)
 my_mission = MalmoPython.MissionSpec(missionXML,True)
 
 my_mission_record = MalmoPython.MissionRecordSpec()
@@ -338,8 +340,8 @@ for retry in range(max_retries):
         break
     except RuntimeError as e:
         if retry == max_retries - 1:
-            print "Error starting mission",e
-            print "Is the game running?"
+            print("Error starting mission",e)
+            print("Is the game running?")
             exit(1)
         else:
             time.sleep(2)
@@ -367,8 +369,7 @@ while world_state.is_mission_running:
         pitch = data.get(u'Pitch', 0)
         # Try to look somewhere interesting:
         if "entities" in data:
-            entities = [EntityInfo(**k) for k in data["entities"]]
-            yaw_to_mob = calcYawToMob(entities, current_x, current_y, current_z)
+            yaw_to_mob = calcYawToMob(data['entities'], current_x, current_y, current_z)
         if pitch < 0:
             agent_host.sendCommand("pitch 0") # stop looking up
         # Find shortest angular distance between the two yaws, preserving sign:
@@ -382,9 +383,9 @@ while world_state.is_mission_running:
         agent_host.sendCommand("turn " + str(deltaYaw))
 
 # mission has ended.
-print "Mission over"
+print("Mission over")
 reward = world_state.rewards[-1].getValue()
-print "Result: " + str(reward)
+print("Result: " + str(reward))
 if reward < 0:
     exit(1)
 else:

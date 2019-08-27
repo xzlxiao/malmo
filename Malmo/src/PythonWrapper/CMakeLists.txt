@@ -22,16 +22,20 @@ set( CPP_SOURCES
 )
 
 set( OTHER_FILES
-  ${CMAKE_SOURCE_DIR}/Malmo/samples/Python_examples/tutorial_6.xml
+  ${PROJECT_SOURCE_DIR}/Malmo/samples/Python_examples/tutorial_6.xml
 )
 
 python_add_module( MalmoPython SHARED ${CPP_SOURCES} )
 include_directories( MalmoPython ${PYTHON_INCLUDE_DIRS} )
-target_link_libraries( MalmoPython Malmo ${PYTHON_LIBRARIES} )
+target_link_libraries( MalmoPython Malmo )
 if( MSVC )
   set_property( TARGET MalmoPython APPEND PROPERTY COMPILE_DEFINITIONS "BOOST_PYTHON_STATIC_LIB=1" ) 
+  target_link_libraries( MalmoPython ${PYTHON_LIBRARIES} )
 elseif( APPLE )
-  set_property( TARGET MalmoPython PROPERTY SUFFIX ".so" )
+  set_target_properties(MalmoPython
+      PROPERTIES
+      SUFFIX ".so"
+      LINK_FLAGS "-undefined dynamic_lookup")
 endif()
 
 # copy the extra files to the build folder for use with testing

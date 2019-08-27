@@ -1,7 +1,7 @@
 
 ## Build on MacOSX ##
 
-These instructions were tested on MacOSX 10.11.1 (El Capitan).
+These instructions were tested on MacOSX 10.13.3 (High Sierra).
 
 1. Install Homebrew: http://www.howtogeek.com/211541/homebrew-for-os-x-easily-installs-desktop-apps-and-terminal-utilities/
 
@@ -10,13 +10,9 @@ These instructions were tested on MacOSX 10.11.1 (El Capitan).
   ```
   brew update
   brew upgrade
-  brew install boost --with-python
-  brew install ffmpeg swig boost-python xerces-c doxygen git cmake
-  sudo brew cask install java
-  brew install xsd
-  brew unlink xsd
-  brew install mono
-  brew link --overwrite xsd
+  brew install python3
+  brew install ffmpeg swig boost-python3 doxygen git cmake wget
+  sudo brew cask install java8
   ```
 
 3. Clone and build Project Malmo:
@@ -31,6 +27,6 @@ These instructions were tested on MacOSX 10.11.1 (El Capitan).
     8. Then you can run the samples that are installed ready-to-run in e.g. `install/Python_Examples`
 
 4. Run the tests:
-    1. `cd MalmoPlatform/build`
-    2. `ctest -E Integration` to run a smaller set of tests (exclude the integration tests).
-    3. `ctest` to run all the tests
+    1. pip3 install future pillow matplotlib
+    2. `cd MalmoPlatform/build`
+    3. `ctest -VV` to run all the tests

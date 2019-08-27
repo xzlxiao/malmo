@@ -1,5 +1,85 @@
+0.37.0
+-------------------
+Fix: for timeLimitInSeconds.
+Fix: Multi-agent timeouts added.
+New: Log for scoring missions.
+New: malmoenv - python to Java environment for OpenAI gym.
+New: Observations from compass (with Biome world generation).
+
+0.36.0
+-------------------
+Fixes for MacOS stability problems.
+
+0.35.0
+-------------------
+New: Now possible for agent to select the Minecraft client's command port using 
+an additional ClientInfo constructor when static port allocation is required.
+Fix: Replaced XSD schema C++ generation in Malmo Agent which removes dependency on
+CodeSynthesis XSD. On Windows that required the Visual Studio 2013 for debug builds.
+New: C# is now built on Windows using modern CMake.
+Chg: Removed support for Mono.
+Chg: Removed support for Torch.
+Chg: Removed Support for Lua.
+New: Support building Malmo as a Python (native) wheel.
+New: Exposed ClientPool clients C++ vector member as Python iterable.
+Chg: Timeouts added to startMission and other agent to Minecraft client communications.
+
+0.34.0
+-------------------
+New: Can now record video streams as individual frames rather than video.
+Fix: Many fixes to recording, tarring, etc - improved stability.
+New: "Human" action space and observations, for tighter human-in-the-loop scenarios.
+New: Titles and subtitles are now returned as part of the chat observation.
+New: [Stability] ObservationFromSystem to return stats on Minecraft's health (eg render/server/client ticks per second)
+New: [Stability] Option to kill Minecraft clients; command-line switch for launchClient to replace clients when killed.
+New: DrawSign allows signposts to be drawn with specific text.
+New: 'includeNBT' flag for ObservationFromRay, to return JSON NBTTagCompound for tile entities.
+New: 'decision_tree_test.py' to test signs/NBTTagCompound.
+New: 'braitenberg_simulation.py' to test luminance video producer (and for fun)
+New: 'mouse_steering_test.py' to test human action space
+New: Dockerfiles for automated building (Linux only, so far)
+Fix: Integration tests can now be run headless - should be reliable (no false negatives)
+
+0.31.0
+-------------------
+New: Samples now compatible with Python 2 and 3
+New: Added luminance, 32bpp depth-map and colour-map video producers
+New: Support for containers - drawing them, transferring inventory, observation producers etc
+
+0.30.0
+-------------------
+New: UPGRADED TO LATEST MC/FORGE
+Breaking: AllowSpawning/AllowedMobs now affects mob_spawners
+Breaking: "Minecart" entity renamed to "MinecartRideable"
+New: Now includes all mobs up to Minecraft 1.11, and "mob_zoo.py" sample
+New: Added new blocktypes and items up to Minecraft 1.11
+New: Added support for drawing tuned note blocks and "note_block_test.py" sample
+
+0.22.0
+-------------------
+New: ObservationFromRay now returns distance.
+New: Added socket logging code to Mod, available in Mod UI.
+New: Added logging code to platform, available through Malmo API.
+New: startMission now provides more error details in exceptions; multi-agent samples hardened by using this.
+New: ObservationFromNearbyEntities now returns entity life.
+New: RewardForDamagingEntity plus sample. (#537)
+
+0.21.0
+-------------------
+New: yaw and pitch added to nearby entity observations.
+New: reward handler and quit producer for mob catching. (#440)
+
+0.20.0
+-------------------
+New: Moving target decorator. (#458)
+New: Multi-agent turn-based scheduler. (#441)
+
 0.19.0
 -------------------
+New: Multi-agent scenario reworked.
+New: Version checking - schemas, mod and platform must all have the same version number. (#334)
+New: Time-based rewards. (#126)
+New: Discrete jumpuse action (great for nerd poling). (#400)
 New: Team rewards. (#279)
 New: Discrete strafe and jump actions, autojump and autofall. (#352, #321)
 New: Simple animation decorator. (#389)

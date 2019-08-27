@@ -41,7 +41,8 @@ namespace malmo
             static boost::shared_ptr<TCPConnection> create(
                 boost::asio::io_service& io_service, 
                 boost::function<void(const TimestampedUnsignedCharVector message) > callback,
-                bool expect_size_header );
+                bool expect_size_header,
+                const std::string& log_name);
 
             boost::asio::ip::tcp::socket& getSocket();
 
@@ -51,7 +52,7 @@ namespace malmo
 
         private:
 
-            TCPConnection(boost::asio::io_service& io_service, boost::function<void(const TimestampedUnsignedCharVector) > callback, bool expect_size_header);
+            TCPConnection(boost::asio::io_service& io_service, boost::function<void(const TimestampedUnsignedCharVector) > callback, bool expect_size_header, const std::string& log_name);
 
             // called when we have successfully read the size header
             void handle_read_header( const boost::system::error_code& error, size_t bytes_transferred );
@@ -63,12 +64,19 @@ namespace malmo
             void handle_read_line( const boost::system::error_code& error, size_t bytes_transferred );
 
             size_t getSizeFromHeader();
+
             void processMessage();
-            void sendReply();
+            void reply();
+            void deliverMessage();
+
+            void transferredHeader(const boost::system::error_code& ec, std::size_t transferred);
+            void transferredBody(const boost::system::error_code& ec, std::size_t transferred);
 
         private:
 
             boost::asio::ip::tcp::socket socket;
+            std::string safe_local_endpoint() const;
+            std::string safe_remote_endpoint() const;
 
             static const int SIZE_HEADER_LENGTH = 4;
             boost::asio::streambuf delimited_buffer;
@@ -80,6 +88,8 @@ namespace malmo
             bool confirm_with_fixed_reply;
             std::string fixed_reply;
             bool expect_size_header;
+            std::string log_name;
+            u_long reply_size_header;
     };
 }
 

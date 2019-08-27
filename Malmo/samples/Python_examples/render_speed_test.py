@@ -1,3 +1,5 @@
+from __future__ import print_function
+from __future__ import division
 # ------------------------------------------------------------------------------------------------
 # Copyright (c) 2016 Microsoft Corporation
 # 
@@ -19,6 +21,8 @@
 
 # Tests overclocking the render speed by running a very simple task at a series of different frame sizes.
 
+from builtins import range
+from past.utils import old_div
 import MalmoPython
 import os
 import random
@@ -27,6 +31,13 @@ import time
 import json
 import errno
 from timeit import default_timer as timer
+import malmoutils
+
+malmoutils.fix_print()
+
+agent_host = MalmoPython.AgentHost()
+agent_host.addOptionalFlag("plot,p", "Plot the results of the render speed tests")
+malmoutils.parse_command_line(agent_host)
 
 def GetMissionXML( width, height, prioritiseOffscreen ):
     return '''<?xml version="1.0" encoding="UTF-8" ?>
@@ -80,27 +91,14 @@ def GetMissionXML( width, height, prioritiseOffscreen ):
         </AgentSection>
 
     </Mission>'''
-  
-sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', 0)  # flush print output immediately
 
-agent_host = MalmoPython.AgentHost()
+TESTING = agent_host.receivedArgument("test")
+SHOW_PLOT = TESTING or agent_host.receivedArgument("plot")
 
-try:
-    agent_host.parse( sys.argv )
-except RuntimeError as e:
-    print 'ERROR:',e
-    print agent_host.getUsage()
-    exit(1)
-if agent_host.receivedArgument("help"):
-    print agent_host.getUsage()
-    exit(0)
-
-if agent_host.receivedArgument("test"):
+if TESTING:
     MISSION_LENGTH=5
-    SHOW_PLOT=False
 else:
     MISSION_LENGTH=10
-    SHOW_PLOT=True
 
 if SHOW_PLOT:
     import matplotlib
@@ -118,29 +116,18 @@ datarate_onscreen=[]
 
 agent_host.setObservationsPolicy(MalmoPython.ObservationsPolicy.LATEST_OBSERVATION_ONLY)
 
-recordingsDirectory="Render_Speed_Test_Recordings"
-
-try:
-    os.makedirs(recordingsDirectory)
-except OSError as exception:
-    if exception.errno != errno.EEXIST: # ignore error if already existed
-        raise
-
-print "WELCOME TO THE RENDER SPEED TEST"
-print "================================"
-print "This will run the same simple mission with " + str(len(sizes)) + " different frame sizes."
+print("WELCOME TO THE RENDER SPEED TEST")
+print("================================")
+print("This will run the same simple mission with " + str(len(sizes)) + " different frame sizes.")
 
 for iRepeat in range(len(sizes) * 2):
     prioritiseOffscreen = "true" if iRepeat % 2 else "false"
-    width,height = sizes[iRepeat/2]
+    width,height = sizes[old_div(iRepeat,2)]
     if iRepeat % 2:
         num_pixels.append(width*height)
     my_mission = MalmoPython.MissionSpec(GetMissionXML(str(width), str(height), prioritiseOffscreen), validate)
     # Set up a recording
-    my_mission_record = MalmoPython.MissionRecordSpec(recordingsDirectory + "//RenderSpeed_Test" + str(iRepeat) + ".tgz");
-    my_mission_record.recordRewards()
-    my_mission_record.recordObservations()
-    my_mission_record.recordMP4(120,1200000) # Attempt to record at 120fps
+    my_mission_record = malmoutils.get_default_recording_object(agent_host, "RenderSpeed_Test" + str(iRepeat));
     max_retries = 3
     for retry in range(max_retries):
         try:
@@ -148,7 +135,7 @@ for iRepeat in range(len(sizes) * 2):
             break
         except RuntimeError as e:
             if retry == max_retries - 1:
-                print "Error starting mission:",e
+                print("Error starting mission:",e)
                 exit(1)
             else:
                 time.sleep(2)
@@ -158,11 +145,11 @@ for iRepeat in range(len(sizes) * 2):
         time.sleep(0.1)
         world_state = agent_host.getWorldState()
         if len(world_state.errors):
-            print
+            print()
             for error in world_state.errors:
-                print "Error:",error.text
+                print("Error:",error.text)
                 exit()
-    print
+    print()
 
     # main loop:
     agent_host.sendCommand("move 1")    # just go forwards, max speed.
@@ -176,21 +163,21 @@ for iRepeat in range(len(sizes) * 2):
 
     end = timer()
     missionTimeMs = (end - start) * 1000
-    dataShifted = (width * height * 3 * numFrames) / (1024*1024)
+    dataShifted = old_div((width * height * 3 * numFrames), (1024*1024))
     averagefps = numFrames * 1000 / missionTimeMs
     datarate = dataShifted * 1000 / missionTimeMs
     
-    print "==============================================================================================="
-    print "Result of test " + str(iRepeat + 1) + ":"
-    print "==============================================================================================="
-    print "Frame size: " + str(width) + " x " + str(height)
-    print "Prioritising offscreen rendering: " + prioritiseOffscreen
-    print "Frames received: " + str(numFrames)
-    print "Average fps: " + "{0:.2f}".format(averagefps)
-    print "Frame data transferred: " + "{0:.2f}".format(dataShifted) + "MB"
-    print "Data transfer rate: " + "{0:.2f}".format(datarate) + "MB/s"
-    print "==============================================================================================="
-    print
+    print("===============================================================================================")
+    print("Result of test " + str(iRepeat + 1) + ":")
+    print("===============================================================================================")
+    print("Frame size: " + str(width) + " x " + str(height))
+    print("Prioritising offscreen rendering: " + prioritiseOffscreen)
+    print("Frames received: " + str(numFrames))
+    print("Average fps: " + "{0:.2f}".format(averagefps))
+    print("Frame data transferred: " + "{0:.2f}".format(dataShifted) + "MB")
+    print("Data transfer rate: " + "{0:.2f}".format(datarate) + "MB/s")
+    print("===============================================================================================")
+    print()
 
     if iRepeat % 2:
         fps_offscreen.append(averagefps)
@@ -211,4 +198,7 @@ if SHOW_PLOT:
     pylab.ylabel("MB/s or frames/s")
     pylab.legend()
     pylab.title("Plot of render and data-transfer speeds for varying frame sizes, with and without onscreen rendering")
-    pylab.show()
+    if TESTING:
+        pylab.savefig(malmoutils.get_recordings_directory(agent_host) + "//render_test_results.png")
+    else:
+        pylab.show()

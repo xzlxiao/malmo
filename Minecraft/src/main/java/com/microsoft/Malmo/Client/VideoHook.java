@@ -21,28 +21,34 @@ package com.microsoft.Malmo.Client;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+
+import com.microsoft.Malmo.Utils.AddressHelper;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.entity.EntityPlayerSP;
+import net.minecraft.launchwrapper.Launch;
+import net.minecraftforge.client.event.RenderWorldLastEvent;
+import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
+import net.minecraftforge.fml.common.gameevent.TickEvent.Phase;
+import net.minecraftforge.fml.common.gameevent.TickEvent.RenderTickEvent;
 
 import org.lwjgl.BufferUtils;
 import org.lwjgl.LWJGLException;
 import org.lwjgl.opengl.Display;
 import org.lwjgl.opengl.DisplayMode;
 
-import net.minecraft.client.Minecraft;
-import net.minecraft.client.entity.EntityPlayerSP;
-import net.minecraft.launchwrapper.Launch;
-import net.minecraftforge.client.event.RenderWorldLastEvent;
-import net.minecraftforge.common.MinecraftForge;
-import net.minecraftforge.fml.common.FMLCommonHandler;
-import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
-import net.minecraftforge.fml.common.gameevent.TickEvent.Phase;
-import net.minecraftforge.fml.common.gameevent.TickEvent.RenderTickEvent;
-
 import com.microsoft.Malmo.MissionHandlerInterfaces.IVideoProducer;
+import com.microsoft.Malmo.MissionHandlerInterfaces.IVideoProducer.VideoType;
 import com.microsoft.Malmo.Schemas.ClientAgentConnection;
+import com.microsoft.Malmo.Schemas.MissionDiagnostics;
+import com.microsoft.Malmo.Schemas.MissionDiagnostics.VideoData;
 import com.microsoft.Malmo.Schemas.MissionInit;
-import com.microsoft.Malmo.Utils.TCPSocketHelper;
+import com.microsoft.Malmo.Utils.TCPSocketChannel;
+import com.microsoft.Malmo.Utils.TextureHelper;
+
 
 /**
  * Register this class on the MinecraftForge.EVENT_BUS to intercept video
@@ -85,7 +91,7 @@ public class VideoHook {
     /**
      * Object which maintains our connection to the agent.
      */
-    private TCPSocketHelper.SocketChannelHelper connection = null;
+    private TCPSocketChannel connection = null;
     
     private int renderWidth;
     
@@ -94,10 +100,19 @@ public class VideoHook {
     ByteBuffer buffer = null;
     ByteBuffer headerbuffer = null;
     final int POS_HEADER_SIZE = 20; // 20 bytes for the five floats governing x,y,z,yaw and pitch.
+
+    // For diagnostic purposes:
+    private long timeOfFirstFrame = 0;
+    private long timeOfLastFrame = 0;
+    private long framesSent = 0;
+    private VideoProducedObserver observer;
+
+    private MalmoEnvServer envServer = null;
+
     /**
      * Resize the rendering and start sending video over TCP.
      */
-    public void start(MissionInit missionInit, IVideoProducer videoProducer)
+    public void start(MissionInit missionInit, IVideoProducer videoProducer, VideoProducedObserver observer, MalmoEnvServer envServer)
     {
         if (videoProducer == null)
         {
@@ -107,10 +122,12 @@ public class VideoHook {
         videoProducer.prepare(missionInit);
         this.missionInit = missionInit;
         this.videoProducer = videoProducer;
+        this.observer = observer;
+        this.envServer = envServer;
         this.buffer = BufferUtils.createByteBuffer(this.videoProducer.getRequiredBufferSize());
         this.headerbuffer = ByteBuffer.allocate(20).order(ByteOrder.BIG_ENDIAN);
-        this.renderWidth = videoProducer.getWidth(missionInit);
-        this.renderHeight = videoProducer.getHeight(missionInit);
+        this.renderWidth = videoProducer.getWidth();
+        this.renderHeight = videoProducer.getHeight();
         resizeIfNeeded();
         Display.setResizable(false); // prevent the user from resizing using the window borders
 
@@ -119,15 +136,29 @@ public class VideoHook {
             return;	// Don't start up if we don't have any connection details.
 
         String agentIPAddress = cac.getAgentIPAddress();
-        int agentPort = cac.getAgentVideoPort();
+        int agentPort = 0;
+        switch (videoProducer.getVideoType())
+        {
+        case LUMINANCE:
+            agentPort = cac.getAgentLuminancePort();
+            break;
+        case DEPTH_MAP:
+            agentPort = cac.getAgentDepthPort();
+            break;
+        case VIDEO:
+            agentPort = cac.getAgentVideoPort();
+            break;
+        case COLOUR_MAP:
+            agentPort = cac.getAgentColourMapPort();
+            break;
+        }
 
-        this.connection = new TCPSocketHelper.SocketChannelHelper(agentIPAddress, agentPort);
+        this.connection = new TCPSocketChannel(agentIPAddress, agentPort, "vid");
         this.failedTCPSendCount = 0;
 
         try
         {
             MinecraftForge.EVENT_BUS.register(this);
-            FMLCommonHandler.instance().bus().register(this); 
         }
         catch(Exception e)
         {
@@ -148,6 +179,9 @@ public class VideoHook {
             return;
         
         try {
+            int old_x = Display.getX();
+            int old_y = Display.getY();
+            Display.setLocation(old_x, old_y);
             Display.setDisplayMode(new DisplayMode(this.renderWidth, this.renderHeight));
             System.out.println("Resized the window");
         } catch (LWJGLException e) {
@@ -160,7 +194,7 @@ public class VideoHook {
     /**
      * Stop sending video.
      */
-    public void stop()
+    public void stop(MissionDiagnostics diags)
     {
         if( !this.isRunning )
         {
@@ -173,7 +207,6 @@ public class VideoHook {
         try
         {
             MinecraftForge.EVENT_BUS.unregister(this);
-            FMLCommonHandler.instance().bus().unregister(this); 
         }
         catch(Exception e)
         {
@@ -185,8 +218,21 @@ public class VideoHook {
 
         // allow the user to resize the window again
         Display.setResizable(true);
+
+        // And fill in some diagnostic data:
+        if (diags != null)
+        {
+            VideoData vd = new VideoData();
+            vd.setFrameType(this.videoProducer.getVideoType().toString());
+            vd.setFramesSent((int) this.framesSent);
+            if (this.timeOfLastFrame == this.timeOfFirstFrame)
+                vd.setAverageFpsSent(new BigDecimal(0));
+            else
+                vd.setAverageFpsSent(new BigDecimal(1000.0 * this.framesSent / (this.timeOfLastFrame - this.timeOfFirstFrame)));
+            diags.getVideoData().add(vd);
+        }
     }
-    
+
     /**
      * Called before and after the rendering of the world.
      * 
@@ -212,55 +258,91 @@ public class VideoHook {
     @SubscribeEvent
     public void postRender(RenderWorldLastEvent event)
     {
-        EntityPlayerSP player = Minecraft.getMinecraft().thePlayer;
-        float x = (float) (player.lastTickPosX + (player.posX - player.lastTickPosX) * event.partialTicks);
-        float y = (float) (player.lastTickPosY + (player.posY - player.lastTickPosY) * event.partialTicks);
-        float z = (float) (player.lastTickPosZ + (player.posZ - player.lastTickPosZ) * event.partialTicks);
-        float yaw = player.prevRotationYaw + (player.rotationYaw - player.prevRotationYaw) * event.partialTicks;
-        float pitch = player.prevRotationPitch + (player.rotationPitch - player.prevRotationPitch) * event.partialTicks;
+        // Check that the video producer and frame type match - eg if this is a colourmap frame, then
+        // only the colourmap videoproducer needs to do anything.
+        boolean colourmapFrame = TextureHelper.colourmapFrame;
+        boolean colourmapVideoProducer = this.videoProducer.getVideoType() == VideoType.COLOUR_MAP;
+        if (colourmapFrame != colourmapVideoProducer)
+            return;
+
+        EntityPlayerSP player = Minecraft.getMinecraft().player;
+        float x = (float) (player.lastTickPosX + (player.posX - player.lastTickPosX) * event.getPartialTicks());
+        float y = (float) (player.lastTickPosY + (player.posY - player.lastTickPosY) * event.getPartialTicks());
+        float z = (float) (player.lastTickPosZ + (player.posZ - player.lastTickPosZ) * event.getPartialTicks());
+        float yaw = player.prevRotationYaw + (player.rotationYaw - player.prevRotationYaw) * event.getPartialTicks();
+        float pitch = player.prevRotationPitch + (player.rotationPitch - player.prevRotationPitch) * event.getPartialTicks();
 
         long time_before_ns = System.nanoTime();
+
+        if (observer != null)
+            observer.frameProduced();
 
         if (time_before_ns < retry_time_ns)
             return;
 
         boolean success = false;
 
+        long time_after_render_ns;
+
         try
         {
             int size = this.videoProducer.getRequiredBufferSize();
-            // Get buffer ready for writing to:
-            this.buffer.clear();
-            this.headerbuffer.clear();
-            // Write the pos data:
-            this.headerbuffer.putFloat(x);
-            this.headerbuffer.putFloat(y);
-            this.headerbuffer.putFloat(z);
-            this.headerbuffer.putFloat(yaw);
-            this.headerbuffer.putFloat(pitch);
-            // Write the frame data:
-            this.videoProducer.getFrame(this.missionInit, this.buffer);
-            // The buffer gets flipped by getFrame(), but we need to flip our header buffer ourselves:
-            this.headerbuffer.flip();
-            ByteBuffer[] buffers = {this.headerbuffer, this.buffer};
 
-            long time_after_render_ns = System.nanoTime();
-            success = this.connection.sendTCPBytes(buffers, size + POS_HEADER_SIZE);
+            if (AddressHelper.getMissionControlPort() == 0) {
+                success = true;
+
+                if (envServer != null) {
+                    // Write the obs data into a newly allocated buffer:
+                    byte[] data = new byte[size];
+                    this.buffer.clear();
+                    this.videoProducer.getFrame(this.missionInit, this.buffer);
+                    this.buffer.get(data); // Avoiding copy not simple as data is kept & written to a stream later.
+                    time_after_render_ns = System.nanoTime();
+
+                    envServer.addFrame(data);
+                } else {
+                    time_after_render_ns = System.nanoTime();
+                }
+            } else {
+                // Get buffer ready for writing to:
+                this.buffer.clear();
+                this.headerbuffer.clear();
+                // Write the pos data:
+                this.headerbuffer.putFloat(x);
+                this.headerbuffer.putFloat(y);
+                this.headerbuffer.putFloat(z);
+                this.headerbuffer.putFloat(yaw);
+                this.headerbuffer.putFloat(pitch);
+                // Write the frame data:
+                this.videoProducer.getFrame(this.missionInit, this.buffer);
+                // The buffer gets flipped by getFrame(), but we need to flip our header buffer ourselves:
+                this.headerbuffer.flip();
+                ByteBuffer[] buffers = {this.headerbuffer, this.buffer};
+                time_after_render_ns = System.nanoTime();
+
+                success = this.connection.sendTCPBytes(buffers, size + POS_HEADER_SIZE);
+            }
+
             long time_after_ns = System.nanoTime();
             float ms_send = (time_after_ns - time_after_render_ns) / 1000000.0f;
             float ms_render = (time_after_render_ns - time_before_ns) / 1000000.0f;
             if (success)
+            {
                 this.failedTCPSendCount = 0;    // Reset count of failed sends.
-            //            System.out.format("Total: %.2fms; collecting took %.2fms; sending %d bytes took %.2fms\n", ms_send + ms_render, ms_render, size, ms_send);
-            //            System.out.println("Collect: " + ms_render + "; Send: " + ms_send);
+                this.timeOfLastFrame = System.currentTimeMillis();
+                if (this.timeOfFirstFrame == 0)
+                	this.timeOfFirstFrame = this.timeOfLastFrame;
+                this.framesSent++;
+	            //            System.out.format("Total: %.2fms; collecting took %.2fms; sending %d bytes took %.2fms\n", ms_send + ms_render, ms_render, size, ms_send);
+	            //            System.out.println("Collect: " + ms_render + "; Send: " + ms_send);
+            }
         }
         catch (Exception e)
         {
             System.out.format(e.getMessage());
         }
         
-        if (!success)
-        {
+        if (!success) {
             System.out.format("Failed to send frame - will retry in %d seconds\n", RETRY_GAP_NS / 1000000000L);
             retry_time_ns = time_before_ns + RETRY_GAP_NS;
             this.failedTCPSendCount++;

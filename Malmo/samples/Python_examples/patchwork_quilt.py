@@ -1,3 +1,5 @@
+from __future__ import print_function
+from __future__ import division
 # ------------------------------------------------------------------------------------------------
 # Copyright (c) 2016 Microsoft Corporation
 # 
@@ -20,6 +22,8 @@
 # Stress test of the maze decorator and mission lifecycle - populates the playing arean with 30,000 small (16x16) mazes,
 # one at a time, and runs each mission for 1 second, recording commands and video.
 
+from builtins import range
+from past.utils import old_div
 import MalmoPython
 import os
 import errno
@@ -28,6 +32,12 @@ import sys
 import time
 import json
 import uuid
+import malmoutils
+
+malmoutils.fix_print()
+
+agent_host = MalmoPython.AgentHost()
+malmoutils.parse_command_line(agent_host)
 
 def GetMissionXML( current_seed, xorg, yorg, zorg, iteration ):
     return '''<?xml version="1.0" encoding="UTF-8" ?>
@@ -90,19 +100,6 @@ def GetMissionXML( current_seed, xorg, yorg, zorg, iteration ):
 
     </Mission>'''
 
-sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', 0)  # flush print output immediately
-validate = True
-agent_host = MalmoPython.AgentHost()
-try:
-    agent_host.parse( sys.argv )
-except RuntimeError as e:
-    print 'ERROR:',e
-    print agent_host.getUsage()
-    exit(1)
-if agent_host.receivedArgument("help"):
-    print agent_host.getUsage()
-    exit(0)
-
 # Create a pool of Minecraft Mod clients:
 my_client_pool = MalmoPython.ClientPool()
 # Add the default client - port 10000 on the local machine:
@@ -115,37 +112,24 @@ my_client_pool.add(my_client)
 # In multi-agent missions all agents must pass the same experimentID, in order to prevent agents from joining the wrong experiments.
 experimentID = uuid.uuid4()
 
-# Create a folder to put our recordings - the platform will not create missing folders itself, it will simply throw an exception.
-recordingsDirectory="QuiltRecordings"
-try:
-    os.makedirs(recordingsDirectory)
-except OSError as exception:
-    if exception.errno != errno.EEXIST: # ignore error if already existed
-        raise
-
 if agent_host.receivedArgument("test"):
-    num_reps = 1
+    num_reps = 30
 else:
     num_reps = 30000
 
-# Set up a recording
-my_mission_record = MalmoPython.MissionRecordSpec()
-my_mission_record.recordCommands()
-my_mission_record.recordMP4(24,400000)
-
 for iRepeat in range(num_reps):
+    # Set up a recording
+    my_mission_record = malmoutils.get_default_recording_object(agent_host, "Patch_{}".format(iRepeat + 1))
     # Find the point at which to create the maze:
     xorg = (iRepeat % 64) * 16
-    zorg = ((iRepeat / 64) % 64) * 16
-    yorg = 200 + ((iRepeat / (64*64)) % 64) * 8
+    zorg = ((old_div(iRepeat, 64)) % 64) * 16
+    yorg = 200 + ((old_div(iRepeat, (64*64))) % 64) * 8
 
-    print "Mission " + str(iRepeat) + " --- starting at " + str(xorg) + ", " + str(yorg) + ", " + str(zorg)
+    print("Mission " + str(iRepeat) + " --- starting at " + str(xorg) + ", " + str(yorg) + ", " + str(zorg))
 
     # Create a mission:
-    my_mission = MalmoPython.MissionSpec(GetMissionXML(iRepeat, xorg, yorg, zorg, iRepeat), validate)
+    my_mission = MalmoPython.MissionSpec(GetMissionXML(iRepeat, xorg, yorg, zorg, iRepeat), True)
     
-    # Give the recording a destination filename:
-    my_mission_record.setDestination(recordingsDirectory + "//" + "Quilt_" + str(iRepeat) + ".tgz")
     max_retries = 3
     for retry in range(max_retries):
         try:
@@ -154,18 +138,18 @@ for iRepeat in range(num_reps):
             break
         except RuntimeError as e:
             if retry == max_retries - 1:
-                print "Error starting mission",e
+                print("Error starting mission",e)
                 exit(1)
             else:
                 time.sleep(2)
 
-    print "Waiting for the mission to start",
+    print("Waiting for the mission to start", end=' ')
     world_state = agent_host.getWorldState()
     while not world_state.has_mission_begun:
-        sys.stdout.write(".")
+        print(".", end="")
         time.sleep(0.1)
         world_state = agent_host.getWorldState()
-    print
+    print()
 
     # main loop:
     while world_state.is_mission_running:
@@ -183,5 +167,5 @@ for iRepeat in range(num_reps):
             agent_host.sendCommand( "move " + str(current_speed) )
             agent_host.sendCommand( "turn " + str(current_yaw_delta) )
 
-    print "Mission has stopped."
+    print("Mission has stopped.")
     time.sleep(0.5)  # Short pause to allow the Mod to get ready for the next mission.
